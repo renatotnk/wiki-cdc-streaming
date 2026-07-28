@@ -1,0 +1,120 @@
+# Per-Phase Implementation Workflow
+
+A repeatable process for implementing, verifying, and committing each phase of the project. This document describes the **generic process** — phase-specific commands (how to run, what to verify) are already documented in each phase SPEC's "Operating commands" and "Acceptance criteria" sections; this file doesn't duplicate them.
+
+---
+
+## One-time setup (before Phase 1)
+
+Done once, at the start of the project:
+
+```bash
+# 1. Virtual environment with uv
+uv venv .venv --prompt cdcstream-wikipedia-project
+source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+
+# 2. Initialize the uv project (if pyproject.toml doesn't exist yet)
+uv init --no-readme --name cdcstream-wikipedia-project
+
+# 3. Credentials: never hardcode — always .env
+cp .env.example .env
+# edit .env with real values (local MinIO, nothing sensitive in Phase 1)
+
+# 4. Confirm .gitignore covers .env and .venv/
+cat .gitignore   # should contain: .env, .venv/, __pycache__/, *.pyc
+```
+
+## Step by step, per phase
+
+### 1. Start the Claude Code session
+
+Name the session after the phase (makes it easier to resume later — see Section 11 of `SPEC-agnostic-architecture.md`):
+
+```bash
+claude -n phase{N}-{short-name}
+# e.g.: claude -n phase1-ingestion
+```
+
+### 2. Initial implementation prompt
+
+Reference the documents by path, don't paste their content — Claude Code reads the files directly:
+
+```
+Implement Phase {N} as specified in docs/SPEC-phase{N}-{name}.md.
+
+Required context before starting:
+- docs/SPEC-agnostic-architecture.md (interface contracts, principles P0-P8, conventions)
+- docs/ENGINEERING-PRINCIPLES.md (DRY/KISS/YAGNI/SOLID — how to apply with moderation)
+- Specs from earlier phases already implemented, if this phase depends on them
+
+Work incrementally: implement one component at a time, show the result, and
+wait for my review before moving to the next. Also generate the tests
+described in the SPEC's "Required tests" section.
+
+Use uv for any new dependency (uv add <package>), never pip directly.
+No hardcoded credentials — everything via .env + python-dotenv.
+```
+
+### 3. Incremental review
+
+As each component is generated (e.g., a Handler, then the Ingestor, then the tests), review it before asking for the next one — don't let the session generate the entire phase at once with no intermediate checkpoint.
+
+### 4. Generate/update the dependency file
+
+At the end of the phase's implementation, export dependencies to the committable format:
+
+```bash
+uv export --no-hashes --format requirements-txt -o requirements.txt
+```
+
+### 5. Local verification — checklist before any commit
+
+This is the step you don't skip: **only commit after everything below passes.**
+
+```bash
+# 1. Environment active and dependencies installed
+source .venv/bin/activate
+uv sync   # or: uv pip install -r requirements.txt
+
+# 2. Environment variables loaded (.env present and filled in)
+cat .env   # check it isn't empty/outdated for this phase
+
+# 3. Bring up the local stack needed for this phase (if applicable)
+docker compose -f local-stack/docker-compose.yml up -d
+
+# 4. Run this phase's test suite
+pytest tests/ -v
+
+# 5. Run the phase's operating command(s) — see the "Operating commands"
+#    section of the corresponding SPEC-phase{N} (e.g., python -m src.producer.main)
+
+# 6. Manually verify each item in the SPEC-phase{N} "Acceptance criteria"
+#    section — not just "the tests passed," but each specific
+#    Given/When/Then listed there
+
+# 7. Tear down the local stack (no leftover process/cost)
+docker compose -f local-stack/docker-compose.yml down -v
+```
+
+### 6. Commit — only after success is confirmed in step 5
+
+```bash
+git add .
+git commit -m "feat(phase{N}): implement {phase name}"
+```
+
+Suggested granularity: one commit per reviewed component (step 3), not a single giant commit at the end — this preserves the commit history as an SDD-process narrative, which is part of this repository's portfolio value.
+
+### 7. Update `docs/PROGRESS.md`
+
+Three lines: current phase, what's already implemented, what's left — per Section 11 of `SPEC-agnostic-architecture.md`. This is what allows resuming from a brand-new session without depending on conversation memory.
+
+### 8. Next phase
+
+Repeat from step 1 for `Phase {N+1}`.
+
+---
+
+## Note on cloud execution (optional, per phase)
+
+When a phase has an optional cloud mode (swapping `*_BACKEND` in `.env`), `docs/RUNBOOK.md` documents the specific steps and cost warnings — this generic workflow doesn't repeat them. The general rule: **always validate locally first** (step 5 above); only run the cloud mode after the local version has already been verified and committed.
