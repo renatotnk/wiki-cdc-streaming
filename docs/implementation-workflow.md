@@ -24,18 +24,60 @@ cp .env.example .env
 cat .gitignore   # should contain: .env, .venv/, __pycache__/, *.pyc
 ```
 
+### Git identity (if this machine also has a work/enterprise GitHub account configured)
+
+Claude Code's account (Anthropic authentication) and git/GitHub identity are two independent systems — Claude Code just runs `git`/`gh` commands through whatever the terminal already has configured. Scope this repo to a personal identity explicitly, rather than relying on whatever the machine's global git config points to:
+
+```bash
+# Repo-scoped identity (not global) — ensures commits attribute to the right account
+git config user.name "Your Name"
+git config user.email "your-personal-email@..."
+```
+
+If the machine's SSH/`gh` setup defaults to a work account, use a dedicated SSH host alias for this repo instead of fighting the global config:
+
+```bash
+ssh-keygen -t ed25519 -C "your-personal-email" -f ~/.ssh/id_ed25519_personal
+# add the public key to github.com/settings/keys on your PERSONAL account
+```
+
+In `~/.ssh/config`:
+```
+Host github.com-personal
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_personal
+```
+
+```bash
+git remote set-url origin git@github.com-personal:your-username/your-repo.git
+gh auth login   # authenticate gh with the personal account
+gh auth switch --hostname github.com --user your-personal-username
+```
+
 ## Step by step, per phase
 
-### 1. Start the Claude Code session
+### 1. Create the phase branch from an up-to-date main
 
-Name the session after the phase (makes it easier to resume later — see Section 11 of `SPEC-agnostic-architecture.md`):
+```bash
+git checkout main
+git pull
+git checkout -b phase{N}-{short-name}
+# e.g.: git checkout -b phase1-ingestion
+```
+
+`main` should always stay in a clean, complete state (a finished, acceptance-verified phase) — never with a half-implemented phase on it. This is also what makes the Phase 2.5 CI meaningful: it runs on every push/PR against `main`, giving an automated gate on top of the local checklist below.
+
+### 2. Start the Claude Code session
+
+Name the session after the branch (consistency, and easier to resume later — see Section 11 of `SPEC-agnostic-architecture.md`):
 
 ```bash
 claude -n phase{N}-{short-name}
 # e.g.: claude -n phase1-ingestion
 ```
 
-### 2. Initial implementation prompt
+### 3. Initial implementation prompt
 
 Reference the documents by path, don't paste their content — Claude Code reads the files directly:
 
@@ -55,11 +97,11 @@ Use uv for any new dependency (uv add <package>), never pip directly.
 No hardcoded credentials — everything via .env + python-dotenv.
 ```
 
-### 3. Incremental review
+### 4. Incremental review
 
 As each component is generated (e.g., a Handler, then the Ingestor, then the tests), review it before asking for the next one — don't let the session generate the entire phase at once with no intermediate checkpoint.
 
-### 4. Generate/update the dependency file
+### 5. Generate/update the dependency file
 
 At the end of the phase's implementation, export dependencies to the committable format:
 
@@ -67,7 +109,7 @@ At the end of the phase's implementation, export dependencies to the committable
 uv export --no-hashes --format requirements-txt -o requirements.txt
 ```
 
-### 5. Local verification — checklist before any commit
+### 6. Local verification — checklist before any commit
 
 This is the step you don't skip: **only commit after everything below passes.**
 
@@ -96,20 +138,48 @@ pytest tests/ -v
 docker compose -f local-stack/docker-compose.yml down -v
 ```
 
-### 6. Commit — only after success is confirmed in step 5
+### 7. Commit — only after success is confirmed in step 6
 
 ```bash
 git add .
 git commit -m "feat(phase{N}): implement {phase name}"
 ```
 
-Suggested granularity: one commit per reviewed component (step 3), not a single giant commit at the end — this preserves the commit history as an SDD-process narrative, which is part of this repository's portfolio value.
+Suggested granularity: one commit per reviewed component (step 4), not a single giant commit at the end — this preserves the commit history as an SDD-process narrative, which is part of this repository's portfolio value. This is also why the PR below is merged with a regular merge commit, not squashed.
 
-### 7. Update `docs/PROGRESS.md`
+### 8. Push the branch and open the PR
+
+```bash
+git push -u origin phase{N}-{short-name}
+gh pr create --title "Phase {N}: {phase name}" --body "Implements docs/SPEC-phase{N}-{name}.md"
+```
+
+Wait for the Phase 2.5 CI `test` job to run green on the PR — that's the automated gate. Review the aggregated diff in the PR itself before merging; seeing the whole diff at once catches things that reviewing component-by-component during implementation doesn't.
+
+### 9. Merge — regular merge commit, not squash
+
+```bash
+gh pr merge --merge
+```
+
+Squashing would collapse the per-component commit history from step 7 into one commit, destroying the granularity that's part of this repo's portfolio value.
+
+### 10. Clean up the branch
+
+```bash
+git checkout main
+git pull
+git branch -d phase{N}-{short-name}
+git push origin --delete phase{N}-{short-name}
+```
+
+Optional: `git tag phase{N}-complete` on `main` after merging — gives a navigable milestone for `docs/PROGRESS.md` to reference and for anyone browsing the repo on GitHub.
+
+### 11. Update `docs/PROGRESS.md`
 
 Three lines: current phase, what's already implemented, what's left — per Section 11 of `SPEC-agnostic-architecture.md`. This is what allows resuming from a brand-new session without depending on conversation memory.
 
-### 8. Next phase
+### 12. Next phase
 
 Repeat from step 1 for `Phase {N+1}`.
 
@@ -117,4 +187,4 @@ Repeat from step 1 for `Phase {N+1}`.
 
 ## Note on cloud execution (optional, per phase)
 
-When a phase has an optional cloud mode (swapping `*_BACKEND` in `.env`), `docs/RUNBOOK.md` documents the specific steps and cost warnings — this generic workflow doesn't repeat them. The general rule: **always validate locally first** (step 5 above); only run the cloud mode after the local version has already been verified and committed.
+When a phase has an optional cloud mode (swapping `*_BACKEND` in `.env`), `docs/RUNBOOK.md` documents the specific steps and cost warnings — this generic workflow doesn't repeat them. The general rule: **always validate locally first** (step 6 above); only run the cloud mode after the local version has already been verified and committed.

@@ -331,7 +331,7 @@ Beyond the technical SPECs, the repository carries documents aimed at whoever ev
 | `docs/RUNBOOK.md` | Strictly detailed step-by-step execution — local and cloud — with an explicit cost warning at every cloud step, and a ready-to-paste code block showing the cloud alternative where it differs from local (e.g., registering a table in Unity Catalog instead of a direct Delta path) | Design justification (that's `trade-offs.md`); any real credential |
 | `docs/trade-offs.md` | Decision → alternatives → why → what was sacrificed, per phase | Execution instructions |
 | `docs/ENGINEERING-PRINCIPLES.md` | DRY/KISS/YAGNI/SOLID/Principle 0, in a project-agnostic way | Any mention of Wikipedia, Delta, or a decision specific to this repository |
-| `docs/implementation-workflow.md` | Repeatable per-phase implementation process with Claude Code (session → incremental review → local verification → commit) | Phase-specific commands (already covered in each SPEC's "Operating commands") |
+| `docs/implementation-workflow.md` | Repeatable per-phase implementation process with Claude Code (branch → session → incremental review → local verification → commit → PR → merge) | Phase-specific commands (already covered in each SPEC's "Operating commands") |
 | `docs/PROGRESS.md` | Durable text checkpoint between sessions (Section 11) | Decision history (that's `trade-offs.md`) |
 
 ### 10.1 Why cloud code blocks live in documentation, not in source code
