@@ -3,6 +3,7 @@
 A complete data pipeline — from ingesting Wikipedia's real-time change feed to a consumable medallion Lakehouse (bronze/silver/gold) — with every piece of infrastructure swappable between local and cloud execution via configuration, never via logic changes.
 
 This project serves two purposes:
+
 1. A public technical portfolio, reproducible by anyone without access to the author's cloud account.
 2. A study vehicle for event ingestion, messaging, Delta Lake, Spark, Databricks, CI/CD, applied FinOps, dimensional modeling, and data visualization.
 
