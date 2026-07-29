@@ -1,16 +1,28 @@
 [project]
 name = "cdcstream-wikipedia-project"
 version = "0.1.0"
-description = "Add your description here"
+description = "CDC-style streaming pipeline: Wikipedia EventStreams to a medallion Lakehouse"
 authors = [
     { name = "renatotanaka", email = "renato.tanaka@wisereducacao.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "google-cloud-pubsub>=2.39.0",
+    "google-cloud-storage>=3.13.0",
+    "minio>=7.2.20",
+    "polars>=1.43.1",
+    "python-dotenv>=1.2.2",
+    "requests>=2.34.2",
+    "sseclient-py>=1.9.0",
+]
 
-[project.scripts]
-cdcstream-wikipedia-project = "cdcstream_wikipedia_project:main"
+[tool.uv]
+package = false
 
-[build-system]
-requires = ["uv_build>=0.12.0,<0.13.0"]
-build-backend = "uv_build"
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
