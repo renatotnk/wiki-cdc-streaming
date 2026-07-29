@@ -328,19 +328,29 @@ Beyond the technical SPECs, the repository carries documents aimed at whoever ev
 | Document | Purpose | Should not contain |
 |---|---|---|
 | `README.md` | Project objective, technologies used, general architecture diagram, high-level architectural decisions — what someone reads in 3 minutes to understand the project | Detailed execution steps (that's `RUNBOOK.md`); extensive justification of each trade-off (that's `trade-offs.md`) |
+| `docs/CLAUDE.md` | **Stable** project memory auto-loaded by Claude Code at the start of every session in this repo (a Claude Code product mechanic, not a portfolio-only artifact): what the project is, where the SPECs live, non-negotiable conventions (P0–P8, uv, `.env`, English-only). Changes slowly, across phases | Volatile per-session status (that's `docs/PROGRESS.md`); decision history (that's `trade-offs.md`) |
 | `docs/RUNBOOK.md` | Strictly detailed step-by-step execution — local and cloud — with an explicit cost warning at every cloud step, and a ready-to-paste code block showing the cloud alternative where it differs from local (e.g., registering a table in Unity Catalog instead of a direct Delta path) | Design justification (that's `trade-offs.md`); any real credential |
 | `docs/trade-offs.md` | Decision → alternatives → why → what was sacrificed, per phase | Execution instructions |
 | `docs/ENGINEERING-PRINCIPLES.md` | DRY/KISS/YAGNI/SOLID/Principle 0, in a project-agnostic way | Any mention of Wikipedia, Delta, or a decision specific to this repository |
 | `docs/implementation-workflow.md` | Repeatable per-phase implementation process with Claude Code (branch → session → incremental review → local verification → commit → PR → merge) | Phase-specific commands (already covered in each SPEC's "Operating commands") |
-| `docs/PROGRESS.md` | Durable text checkpoint between sessions (Section 11) | Decision history (that's `trade-offs.md`) |
+| `docs/PROGRESS.md` | **Volatile** durable text checkpoint between sessions, refreshed at the end of every session (Section 11) | Decision history (that's `trade-offs.md`); stable conventions (that's `docs/CLAUDE.md`) |
 
 ### 10.1 Why cloud code blocks live in documentation, not in source code
 
 Given principle P2 (swap via configuration), the source code is already agnostic by design — there is no separate "cloud code path" hidden behind a comment. What actually changes to run in the cloud, beyond configuration, is *setup* that only exists once (e.g., catalog/schema creation DDL in Unity Catalog) — that doesn't belong in the versioned pipeline, so it lives as a ready-to-use reference block in `RUNBOOK.md`, not as commented-out code inside the `.py` files. Keeping dead/commented code in the source would violate KISS and P0.
 
+### 10.2 When each document is written — incremental, not end-of-project
+
+`README.md` and `docs/CLAUDE.md` are **not** written once at the end. A repository sitting at Phase 2 with no README beyond the LICENSE looks abandoned, not in-progress — bad for a portfolio repo where each phase is merged to `main` via its own PR and could be viewed by anyone at any point.
+
+- `README.md`: a minimal skeleton (objective, tech stack placeholder, architecture diagram placeholder, a phase-status checklist) is created during one-time setup, before Phase 1. Each phase's PR updates the relevant section (status checklist, tech stack additions, architecture diagram once it exists) as part of that same PR — not a separate end-of-project task.
+- `docs/CLAUDE.md`: a baseline version is also created during one-time setup (project one-liner, pointers to `SPEC-agnostic-architecture.md` and `ENGINEERING-PRINCIPLES.md`, the non-negotiable conventions). Each phase appends a short "what exists now" note at merge time — see `docs/implementation-workflow.md`.
+- `docs/trade-offs.md` and `docs/RUNBOOK.md` are populated per phase too, as each phase's decisions and execution steps become concrete — never written speculatively ahead of the phase that produces the content (YAGNI).
+
 ---
 
 ## 11. Development continuity (Claude Code usage limits)
+
 
 This project is implemented across multiple Claude Code sessions, possibly over days/weeks. Two distinct risks can interrupt a session, and each deserves a different treatment:
 

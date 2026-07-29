@@ -55,7 +55,23 @@ gh auth login   # authenticate gh with the personal account
 gh auth switch --hostname github.com --user your-personal-username
 ```
 
+### `README.md` and `docs/CLAUDE.md` skeletons
+
+Both start during setup, not at the end of the project — see Section 10.2 of `SPEC-agnostic-architecture.md` for why. Ask Claude Code to create both in this same initial session, before Phase 1 begins:
+
+```
+Create a minimal README.md skeleton (project objective, tech stack
+placeholder, architecture diagram placeholder, a phase-status checklist
+for Phases 1-4) and a baseline docs/CLAUDE.md (project one-liner, pointers
+to docs/SPEC-agnostic-architecture.md and docs/ENGINEERING-PRINCIPLES.md,
+and the non-negotiable conventions: Python + uv, .env for credentials,
+English-only for everything in this repo).
+```
+
+Both get updated as part of each phase's own PR going forward (step 11 below) — never as a separate end-of-project task.
+
 ## Step by step, per phase
+
 
 ### 1. Create the phase branch from an up-to-date main
 
@@ -100,6 +116,18 @@ No hardcoded credentials — everything via .env + python-dotenv.
 ### 4. Incremental review
 
 As each component is generated (e.g., a Handler, then the Ingestor, then the tests), review it before asking for the next one — don't let the session generate the entire phase at once with no intermediate checkpoint.
+
+#### Pausing and resuming mid-phase
+
+Closing the terminal, sleeping the machine, or stepping away doesn't lose anything — Claude Code saves the session transcript continuously to disk, per project directory. To pick back up exactly where you left off:
+
+```bash
+claude --resume phase{N}-{short-name}
+```
+
+This restores the full conversation history, including every tool call already made — there's no need to re-explain context or re-paste the initial prompt; just continue naturally (e.g., "continue where we left off," or ask directly for the next step). If you don't remember the exact session name, `claude --resume` with no argument opens an interactive picker.
+
+If session history isn't available for some reason (expired, switched machines), `docs/PROGRESS.md` + `git log` are the durable fallback that doesn't depend on any conversation memory — see Section 11 of `SPEC-agnostic-architecture.md`.
 
 ### 5. Generate/update the dependency file
 
@@ -175,9 +203,13 @@ git push origin --delete phase{N}-{short-name}
 
 Optional: `git tag phase{N}-complete` on `main` after merging — gives a navigable milestone for `docs/PROGRESS.md` to reference and for anyone browsing the repo on GitHub.
 
-### 11. Update `docs/PROGRESS.md`
+### 11. Update `docs/PROGRESS.md`, `README.md`, and `docs/CLAUDE.md`
 
-Three lines: current phase, what's already implemented, what's left — per Section 11 of `SPEC-agnostic-architecture.md`. This is what allows resuming from a brand-new session without depending on conversation memory.
+All three are part of the same PR, not an afterthought:
+
+- **`docs/PROGRESS.md`**: three lines — current phase, what's already implemented, what's left — per Section 11 of `SPEC-agnostic-architecture.md`. This is what allows resuming from a brand-new session without depending on conversation memory.
+- **`README.md`**: check off this phase in the status checklist; add any new tech-stack entry or architecture-diagram detail this phase introduced.
+- **`docs/CLAUDE.md`**: append a short "what exists now" note (e.g., "Phase 1 complete: producer/consumer implemented, see `SPEC-phase1-ingestion.md`") — this is what a future Claude Code session reads automatically to orient itself, so keep it terse; it's not the place for the full story (that's `trade-offs.md`).
 
 ### 12. Next phase
 
