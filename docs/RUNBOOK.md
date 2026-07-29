@@ -16,7 +16,10 @@ uv sync
 cp .env.example .env
 # Defaults already match the local stack (MESSAGING_BACKEND=emulator,
 # STORAGE_BACKEND=minio, localhost:8085/localhost:9000) — no edits needed
-# for a pure local run.
+# for those. One edit is required: set WIKI_STREAM_CONTACT to your own
+# email/URL — Wikimedia's EventStreams endpoint rejects requests with no
+# contact info in the User-Agent (403). There is no code-level default,
+# by design (it's per-deployer, not something to hardcode or commit).
 
 # 3. Bring up the local stack (Pub/Sub Emulator + MinIO)
 docker compose -f local-stack/docker-compose.yml up -d

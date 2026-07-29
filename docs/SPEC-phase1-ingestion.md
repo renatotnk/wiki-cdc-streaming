@@ -105,6 +105,7 @@ Fields from the original event (Section 3 of the architecture SPEC) **plus** ing
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | string | Only if `minio` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | path | Only if `gcs` |
 | `WIKI_STREAM_URL` | URL | No (default: official endpoint from Section 3) |
+| `WIKI_STREAM_CONTACT` | string (email/URL) | Yes — sent in the request's `User-Agent` per Wikimedia's User-Agent policy; no default, requests without it get a 403 |
 | `CONSUMER_FLUSH_SIZE` | int | No (default: 500) |
 | `CONSUMER_FLUSH_INTERVAL_SECONDS` | int | No (default: 60) |
 
