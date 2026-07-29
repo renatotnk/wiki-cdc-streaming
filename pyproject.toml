@@ -3,7 +3,7 @@ name = "cdcstream-wikipedia-project"
 version = "0.1.0"
 description = "CDC-style streaming pipeline: Wikipedia EventStreams to a medallion Lakehouse"
 authors = [
-    { name = "renatotanaka", email = "renato.tanaka@wisereducacao.com" }
+    { name = "renatotnk", email = "renato-tnk@live.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [

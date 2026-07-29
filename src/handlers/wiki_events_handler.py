@@ -20,6 +20,11 @@ DEFAULT_STREAM_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
 INITIAL_BACKOFF_SECONDS = 1
 MAX_BACKOFF_SECONDS = 60
 
+# Wikimedia rejects requests with a generic/missing User-Agent (403) — see
+# https://meta.wikimedia.org/wiki/User-Agent_policy. No default: the contact
+# address is per-deployer and must come from .env, never hardcoded here.
+USER_AGENT_TEMPLATE = "cdcstream-wikipedia-project/0.1.0 ({contact})"
+
 logger = get_logger("wiki_events_handler")
 
 
@@ -64,7 +69,10 @@ class WikiEventsHandler:
                 continue
 
     def _open_sse_stream(self) -> Iterator[str]:
-        response = requests.get(self._stream_url, stream=True)
+        user_agent = USER_AGENT_TEMPLATE.format(contact=os.environ["WIKI_STREAM_CONTACT"])
+        response = requests.get(
+            self._stream_url, stream=True, headers={"User-Agent": user_agent}
+        )
         response.raise_for_status()
         client = sseclient.SSEClient(response)
         for sse_event in client.events():
