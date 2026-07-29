@@ -345,7 +345,7 @@ Given principle P2 (swap via configuration), the source code is already agnostic
 
 - `README.md`: a minimal skeleton (objective, tech stack placeholder, architecture diagram placeholder, a phase-status checklist) is created during one-time setup, before Phase 1. Each phase's PR updates the relevant section (status checklist, tech stack additions, architecture diagram once it exists) as part of that same PR — not a separate end-of-project task.
 - `docs/CLAUDE.md`: a baseline version is also created during one-time setup (project one-liner, pointers to `SPEC-agnostic-architecture.md` and `ENGINEERING-PRINCIPLES.md`, the non-negotiable conventions). Each phase appends a short "what exists now" note at merge time — see `docs/implementation-workflow.md`.
-- `docs/trade-offs.md` and `docs/RUNBOOK.md` are populated per phase too, as each phase's decisions and execution steps become concrete — never written speculatively ahead of the phase that produces the content (YAGNI).
+- `docs/trade-offs.md` and `docs/RUNBOOK.md` are populated per phase too, as each phase's decisions and execution steps become concrete — never written speculatively ahead of the phase that produces the content (YAGNI). This isn't just a stated intention: the implementation prompt template in `docs/implementation-workflow.md` explicitly instructs Claude Code to fill in that phase's `docs/RUNBOOK.md` section before the phase is considered done — it's a deliverable of the phase, not a follow-up request.
 
 ---
 

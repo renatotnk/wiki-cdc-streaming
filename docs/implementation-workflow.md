@@ -55,20 +55,23 @@ gh auth login   # authenticate gh with the personal account
 gh auth switch --hostname github.com --user your-personal-username
 ```
 
-### `README.md` and `docs/CLAUDE.md` skeletons
+### `README.md`, `docs/CLAUDE.md`, and `docs/RUNBOOK.md` skeletons
 
-Both start during setup, not at the end of the project — see Section 10.2 of `SPEC-agnostic-architecture.md` for why. Ask Claude Code to create both in this same initial session, before Phase 1 begins:
+All three start during setup, not at the end of the project — see Section 10.2 of `SPEC-agnostic-architecture.md` for why. Ask Claude Code to create all three in this same initial session, before Phase 1 begins:
 
 ```
 Create a minimal README.md skeleton (project objective, tech stack
 placeholder, architecture diagram placeholder, a phase-status checklist
-for Phases 1-4) and a baseline docs/CLAUDE.md (project one-liner, pointers
+for Phases 1-4), a baseline docs/CLAUDE.md (project one-liner, pointers
 to docs/SPEC-agnostic-architecture.md and docs/ENGINEERING-PRINCIPLES.md,
 and the non-negotiable conventions: Python + uv, .env for credentials,
-English-only for everything in this repo).
+English-only for everything in this repo), and a docs/RUNBOOK.md skeleton
+with one section per phase (Phase 1 ... Phase 4), each with empty "Local
+setup," "Local run," and "Cloud (optional)" subsections to be filled in
+as each phase is implemented.
 ```
 
-Both get updated as part of each phase's own PR going forward (step 11 below) — never as a separate end-of-project task.
+All three get updated as part of each phase's own PR going forward (step 11 below) — never as a separate end-of-project task, and never something you need to remember to ask for manually.
 
 ## Step by step, per phase
 
@@ -111,6 +114,13 @@ described in the SPEC's "Required tests" section.
 
 Use uv for any new dependency (uv add <package>), never pip directly.
 No hardcoded credentials — everything via .env + python-dotenv.
+
+Before considering this phase done, fill in this phase's section of
+docs/RUNBOOK.md: "Local setup" and "Local run" from the SPEC's "Operating
+commands" section, worded as a first-time reader would need them (don't
+assume context from this conversation). If this phase has an optional
+cloud mode, also fill in "Cloud (optional)" with the cost warning and the
+ready-to-paste cloud snippet per Section 10.1 of docs/SPEC-agnostic-architecture.md.
 ```
 
 ### 4. Incremental review
@@ -203,13 +213,14 @@ git push origin --delete phase{N}-{short-name}
 
 Optional: `git tag phase{N}-complete` on `main` after merging — gives a navigable milestone for `docs/PROGRESS.md` to reference and for anyone browsing the repo on GitHub.
 
-### 11. Update `docs/PROGRESS.md`, `README.md`, and `docs/CLAUDE.md`
+### 11. Update `docs/PROGRESS.md`, `README.md`, `docs/CLAUDE.md`, and `docs/RUNBOOK.md`
 
-All three are part of the same PR, not an afterthought:
+All four are part of the same PR, not an afterthought — the `docs/RUNBOOK.md` section for this phase should already exist from step 3, but double-check it here before opening the PR:
 
 - **`docs/PROGRESS.md`**: three lines — current phase, what's already implemented, what's left — per Section 11 of `SPEC-agnostic-architecture.md`. This is what allows resuming from a brand-new session without depending on conversation memory.
 - **`README.md`**: check off this phase in the status checklist; add any new tech-stack entry or architecture-diagram detail this phase introduced.
 - **`docs/CLAUDE.md`**: append a short "what exists now" note (e.g., "Phase 1 complete: producer/consumer implemented, see `SPEC-phase1-ingestion.md`") — this is what a future Claude Code session reads automatically to orient itself, so keep it terse; it's not the place for the full story (that's `trade-offs.md`).
+- **`docs/RUNBOOK.md`**: verify this phase's "Local setup"/"Local run"/"Cloud (optional)" subsections are actually complete enough for someone who wasn't in this conversation to follow — this is the check that catches the gap of having to ask for it manually after the fact.
 
 ### 12. Next phase
 
