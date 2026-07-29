@@ -19,7 +19,12 @@ SCHEMA_VERSION = "1.0.0"
 # recentchange payload this pipeline treats as "official." Everything else
 # in the payload (today or added later by the source) is preserved,
 # untyped, in `_extra_fields` — never dropped (Robustness Principle, P8).
-KNOWN_TOP_LEVEL_FIELDS = {
+#
+# A tuple, not a set: iterating a set of strings has an order that varies
+# across process runs (hash randomization), which would make the resulting
+# event dict's column order non-deterministic and break concatenating
+# Parquet files written by different process invocations.
+KNOWN_TOP_LEVEL_FIELDS = (
     "id",
     "type",
     "title",
@@ -30,7 +35,7 @@ KNOWN_TOP_LEVEL_FIELDS = {
     "server_url",
     "meta",
     "length",
-}
+)
 
 
 class MalformedEventError(Exception):
