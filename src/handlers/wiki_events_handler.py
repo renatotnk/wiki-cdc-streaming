@@ -23,7 +23,7 @@ MAX_BACKOFF_SECONDS = 60
 # Wikimedia rejects requests with a generic/missing User-Agent (403) — see
 # https://meta.wikimedia.org/wiki/User-Agent_policy. No default: the contact
 # address is per-deployer and must come from .env, never hardcoded here.
-USER_AGENT_TEMPLATE = "cdcstream-wikipedia-project/0.1.0 ({contact})"
+USER_AGENT_TEMPLATE = "wiki-cdc-streaming/0.1.0 ({contact})"
 
 logger = get_logger("wiki_events_handler")
 

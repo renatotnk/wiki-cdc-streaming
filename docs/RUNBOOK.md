@@ -75,8 +75,8 @@ aws s3api create-bucket --bucket <your-bucket-name> --region us-east-2 \
   --create-bucket-configuration LocationConstraint=us-east-2
 
 # Dedicated IAM user + access key, scoped to just this bucket (least privilege)
-aws iam create-user --user-name cdcstream-local-run
-aws iam put-user-policy --user-name cdcstream-local-run --policy-name cdcstream-s3-access \
+aws iam create-user --user-name wiki-cdc-streaming-run
+aws iam put-user-policy --user-name wiki-cdc-streaming-run --policy-name wiki-cdc-streaming-s3-access \
   --policy-document '{
     "Version": "2012-10-17",
     "Statement": [{
@@ -85,7 +85,7 @@ aws iam put-user-policy --user-name cdcstream-local-run --policy-name cdcstream-
       "Resource": ["arn:aws:s3:::<your-bucket-name>", "arn:aws:s3:::<your-bucket-name>/*"]
     }]
   }'
-aws iam create-access-key --user-name cdcstream-local-run
+aws iam create-access-key --user-name wiki-cdc-streaming-run
 # copy AccessKeyId/SecretAccessKey from the output into .env below
 ```
 
@@ -106,9 +106,9 @@ AWS_REGION=us-east-2
 # Teardown — avoid any lingering cost/resource
 aws s3 rm s3://<your-bucket-name> --recursive
 aws s3api delete-bucket --bucket <your-bucket-name> --region us-east-2
-aws iam delete-access-key --user-name cdcstream-local-run --access-key-id <the-access-key-id>
-aws iam delete-user-policy --user-name cdcstream-local-run --policy-name cdcstream-s3-access
-aws iam delete-user --user-name cdcstream-local-run
+aws iam delete-access-key --user-name wiki-cdc-streaming-run --access-key-id <the-access-key-id>
+aws iam delete-user-policy --user-name wiki-cdc-streaming-run --policy-name wiki-cdc-streaming-s3-access
+aws iam delete-user --user-name wiki-cdc-streaming-run
 ```
 
 #### Storage option B: GCS
@@ -121,15 +121,15 @@ gcloud services enable storage.googleapis.com
 gsutil mb -l us-central1 gs://<your-bucket-name>
 
 # Service account credential for GOOGLE_APPLICATION_CREDENTIALS
-gcloud iam service-accounts create cdcstream-local-run
+gcloud iam service-accounts create wiki-cdc-streaming-run
 gcloud projects add-iam-policy-binding <your-gcp-project-id> \
-  --member="serviceAccount:cdcstream-local-run@<your-gcp-project-id>.iam.gserviceaccount.com" \
+  --member="serviceAccount:wiki-cdc-streaming-run@<your-gcp-project-id>.iam.gserviceaccount.com" \
   --role="roles/pubsub.editor"
 gcloud projects add-iam-policy-binding <your-gcp-project-id> \
-  --member="serviceAccount:cdcstream-local-run@<your-gcp-project-id>.iam.gserviceaccount.com" \
+  --member="serviceAccount:wiki-cdc-streaming-run@<your-gcp-project-id>.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
 gcloud iam service-accounts keys create ./gcp-credentials.json \
-  --iam-account=cdcstream-local-run@<your-gcp-project-id>.iam.gserviceaccount.com
+  --iam-account=wiki-cdc-streaming-run@<your-gcp-project-id>.iam.gserviceaccount.com
 ```
 
 Update `.env` (keep the rest of the file untouched):
@@ -145,7 +145,7 @@ GOOGLE_APPLICATION_CREDENTIALS=./gcp-credentials.json
 ```bash
 # Teardown — avoid any lingering cost/resource
 gsutil rm -r gs://<your-bucket-name>
-gcloud iam service-accounts delete cdcstream-local-run@<your-gcp-project-id>.iam.gserviceaccount.com
+gcloud iam service-accounts delete wiki-cdc-streaming-run@<your-gcp-project-id>.iam.gserviceaccount.com
 rm ./gcp-credentials.json
 ```
 

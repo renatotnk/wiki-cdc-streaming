@@ -3,3 +3,11 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Personal cloud-provisioning convenience scripts (mirror docs/RUNBOOK.md's
+# manual commands) and the credential file they generate -- never committed.
+scripts/cloud_pubsub.sh
+scripts/cloud_s3.sh
+scripts/cloud_gcs.sh
+scripts/lib.sh
+gcp-credentials.json

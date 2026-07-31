@@ -32,9 +32,9 @@ google-auth==2.56.2
 google-cloud-core==2.6.0
     # via google-cloud-storage
 google-cloud-pubsub==2.39.0
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 google-cloud-storage==3.13.0
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 google-crc32c==1.8.0
     # via
     #   google-cloud-storage
@@ -64,7 +64,7 @@ idna==3.18
 iniconfig==2.3.0
     # via pytest
 minio==7.2.20
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 opentelemetry-api==1.44.0
     # via
     #   google-cloud-pubsub
@@ -79,7 +79,7 @@ packaging==26.2
 pluggy==1.6.0
     # via pytest
 polars==1.43.1
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 polars-runtime-32==1.43.1
     # via polars
 proto-plus==1.28.2
@@ -106,14 +106,14 @@ pygments==2.20.0
     # via pytest
 pytest==9.1.1
 python-dotenv==1.2.2
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 requests==2.34.2
     # via
-    #   cdcstream-wikipedia-project
     #   google-api-core
     #   google-cloud-storage
+    #   wiki-cdc-streaming
 sseclient-py==1.9.0
-    # via cdcstream-wikipedia-project
+    # via wiki-cdc-streaming
 typing-extensions==4.16.0
     # via
     #   grpcio

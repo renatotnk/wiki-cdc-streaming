@@ -14,11 +14,11 @@ java -version   # needs JDK 17 or newer (Spark 4.1+/SDP requirement — stricter
                 # install one if this fails (e.g., via your OS package manager, or https://adoptium.net)
 
 # 1. Virtual environment with uv
-uv venv .venv --prompt cdcstream-wikipedia-project
+uv venv .venv --prompt wiki-cdc-streaming
 source .venv/bin/activate   # or .venv\Scripts\activate on Windows
 
 # 2. Initialize the uv project (if pyproject.toml doesn't exist yet)
-uv init --no-readme --name cdcstream-wikipedia-project
+uv init --no-readme --name wiki-cdc-streaming
 
 # 3. Credentials: never hardcode — always .env
 cp .env.example .env

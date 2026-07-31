@@ -4,7 +4,7 @@ services:
     command: >
       gcloud beta emulators pubsub start
       --host-port=0.0.0.0:8085
-      --project=${PUBSUB_PROJECT_ID:-cdcstream-local}
+      --project=${PUBSUB_PROJECT_ID:-wiki-cdc-streaming-local}
     ports:
       - "8085:8085"
 

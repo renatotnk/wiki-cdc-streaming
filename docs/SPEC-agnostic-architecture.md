@@ -136,7 +136,7 @@ Unlike the interface contracts above (which deal with *pluggable backends*), a *
 ## 5. Repository structure
 
 ```
-data-pipeline-portfolio/
+wiki-cdc-streaming/
 ├── README.md
 ├── .env.example                             ← template, no real values (convention 9.8)
 ├── .gitignore                               ← covers .env, .venv/, __pycache__/
@@ -327,7 +327,7 @@ Full definitions in `docs/ENGINEERING-PRINCIPLES.md` (project-agnostic document,
 
 ### 9.7 Python environment and dependencies
 
-- **Manager:** `uv`, not `pip`/`venv`/`conda` directly. Virtual environment created as `uv venv .venv --prompt cdcstream-wikipedia-project`; dependencies added via `uv add <package>` (never manually edited in a `requirements.txt`).
+- **Manager:** `uv`, not `pip`/`venv`/`conda` directly. Virtual environment created as `uv venv .venv --prompt wiki-cdc-streaming`; dependencies added via `uv add <package>` (never manually edited in a `requirements.txt`).
 - **Committed file:** `requirements.txt` generated from `pyproject.toml`/`uv.lock` via `uv export --no-hashes --format requirements-txt -o requirements.txt`, updated at the end of every phase that introduces a new dependency. This keeps compatibility with tools that expect `requirements.txt` (CI, Databricks cluster libraries) without giving up `uv`'s deterministic lockfile for development.
 
 ### 9.8 Credential management
