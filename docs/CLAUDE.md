@@ -16,4 +16,4 @@ Wikipedia EventStreams → medallion Lakehouse (bronze/silver/gold): a CDC-style
 
 ## What exists now
 
-- **Phase 1 complete** — producer/consumer implemented (`WikiEventsHandler`, Pub/Sub emulator/cloud handlers, MinIO/GCS storage handlers, `backend_factory`), see `SPEC-phase1-ingestion.md`.
+- **Phase 1 complete** — producer/consumer implemented (`WikiEventsHandler`, Pub/Sub emulator/cloud handlers, `S3CompatibleStorageHandler` serving `STORAGE_BACKEND=minio|s3` + `GcsStorageHandler` for `gcs`, `backend_factory`), see `SPEC-phase1-ingestion.md`.

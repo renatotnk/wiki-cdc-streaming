@@ -47,18 +47,73 @@ docker compose -f local-stack/docker-compose.yml down -v
 
 ### Cloud (optional)
 
-> **Cost warning:** real Pub/Sub and GCS both stay within the GCP Always Free tier at this project's lab scale, but they are real cloud resources tied to your GCP account/billing — unlike the local stack, they are not torn down by `docker compose down`. Delete them explicitly (commands at the end of this section) when you're done experimenting with the cloud path.
+> **Cost warning:** real Pub/Sub, S3, and GCS all stay within their respective Always Free / free-tier allowances at this project's lab scale (Section 6 of `SPEC-agnostic-architecture.md`), but they are real cloud resources tied to your GCP/AWS account and billing — unlike the local stack, they are not torn down by `docker compose down`. Delete them explicitly (commands at the end of each block) when you're done experimenting with the cloud path. AWS's Free Tier historically applied only to the first 12 months on new accounts for some services — double-check your account's current Free Tier status before assuming $0 on S3.
 
-Switching backends is configuration-only (P2) — no change to `src/producer/`, `src/consumer/`, or `src/shared/`. What changes beyond `.env` is one-time cloud-side setup that the application deliberately does not do for you:
+Switching backends is configuration-only (P2) — no change to `src/producer/`, `src/consumer/`, or `src/shared/`. What changes beyond `.env` is one-time cloud-side setup that the application deliberately does not do for you. Messaging and storage are independent choices — pick a storage option (S3 or GCS) regardless of whether Pub/Sub is emulated or real.
 
 - **Pub/Sub:** topic/subscription creation *is* automatic in cloud mode too (`ensure_topic` calls the real Pub/Sub API the same way it calls the emulator) — you only need a GCP project with the Pub/Sub API enabled and a credential.
-- **GCS bucket:** creation is deliberately **not** automatic (`src/handlers/storage/gcs_storage_handler.py`) — per P3 (no cloud resource turned on by default), you create it explicitly, once, below.
+- **S3 bucket:** creation is deliberately **not** automatic when `S3_ENDPOINT_URL` is unset (`src/handlers/storage/s3_compatible_storage_handler.py`) — per P3 (no cloud resource turned on by default), you create it explicitly, once, below. **Required if you plan to run Phase 2+ on Databricks Free Edition**, whose External Volumes only support S3-backed storage, not GCS.
+- **GCS bucket:** creation is deliberately **not** automatic (`src/handlers/storage/gcs_storage_handler.py`) — same P3 reasoning, same explicit-creation requirement.
 
 ```bash
-# One-time GCP setup
+# One-time GCP setup (Pub/Sub — needed regardless of which storage option you pick)
 gcloud auth application-default login
 gcloud config set project <your-gcp-project-id>
-gcloud services enable pubsub.googleapis.com storage.googleapis.com
+gcloud services enable pubsub.googleapis.com
+```
+
+#### Storage option A: S3 (required for Databricks Free Edition)
+
+```bash
+# One-time AWS setup
+aws configure   # or export AWS_PROFILE=<your-profile>, if not already configured
+
+# Create the bucket (us-east-1 is the one region that omits --create-bucket-configuration)
+aws s3api create-bucket --bucket <your-bucket-name> --region <your-aws-region> \
+  --create-bucket-configuration LocationConstraint=<your-aws-region>
+
+# Dedicated IAM user + access key, scoped to just this bucket (least privilege)
+aws iam create-user --user-name cdcstream-local-run
+aws iam put-user-policy --user-name cdcstream-local-run --policy-name cdcstream-s3-access \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::<your-bucket-name>", "arn:aws:s3:::<your-bucket-name>/*"]
+    }]
+  }'
+aws iam create-access-key --user-name cdcstream-local-run
+# copy AccessKeyId/SecretAccessKey from the output into .env below
+```
+
+Update `.env` (keep the rest of the file untouched — critically, `S3_ENDPOINT_URL` must be **unset/removed**, not just left at its local value, or `S3CompatibleStorageHandler` will still point at MinIO):
+
+```bash
+MESSAGING_BACKEND=cloud
+PUBSUB_PROJECT_ID=<your-gcp-project-id>
+STORAGE_BACKEND=s3
+BUCKET_NAME=<your-bucket-name>
+AWS_ACCESS_KEY_ID=<the-access-key-id-from-above>
+AWS_SECRET_ACCESS_KEY=<the-secret-access-key-from-above>
+AWS_REGION=<your-aws-region>
+# S3_ENDPOINT_URL removed entirely
+```
+
+```bash
+# Teardown — avoid any lingering cost/resource
+aws s3 rm s3://<your-bucket-name> --recursive
+aws s3api delete-bucket --bucket <your-bucket-name> --region <your-aws-region>
+aws iam delete-access-key --user-name cdcstream-local-run --access-key-id <the-access-key-id>
+aws iam delete-user-policy --user-name cdcstream-local-run --policy-name cdcstream-s3-access
+aws iam delete-user --user-name cdcstream-local-run
+```
+
+#### Storage option B: GCS
+
+```bash
+# One-time GCP setup (in addition to the Pub/Sub setup above)
+gcloud services enable storage.googleapis.com
 
 # Create the GCS bucket (Always Free tier: 5GB-month, single region)
 gsutil mb -l us-central1 gs://<your-bucket-name>
@@ -85,16 +140,21 @@ BUCKET_NAME=<your-bucket-name>
 GOOGLE_APPLICATION_CREDENTIALS=./gcp-credentials.json
 ```
 
-Run producer/consumer exactly as in the local run section above — same commands, no code change.
-
 ```bash
 # Teardown — avoid any lingering cost/resource
 gsutil rm -r gs://<your-bucket-name>
-gcloud pubsub subscriptions delete recentchange-raw-sub
-gcloud pubsub topics delete recentchange-raw
 gcloud iam service-accounts delete cdcstream-local-run@<your-gcp-project-id>.iam.gserviceaccount.com
 rm ./gcp-credentials.json
 ```
+
+#### Pub/Sub teardown (either storage option)
+
+```bash
+gcloud pubsub subscriptions delete recentchange-raw-sub
+gcloud pubsub topics delete recentchange-raw
+```
+
+Run producer/consumer exactly as in the local run section above — same commands, no code change, regardless of which storage option you picked.
 
 ---
 

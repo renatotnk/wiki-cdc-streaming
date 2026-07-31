@@ -13,6 +13,7 @@ import os
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 
 import polars as pl
 import pytest
@@ -64,11 +65,12 @@ def _make_event(i: int, run_marker: str) -> str:
 
 
 def _read_all_partitions(storage_backend) -> pl.DataFrame:
+    endpoint = urlparse(os.environ["S3_ENDPOINT_URL"])
     client = Minio(
-        os.environ["MINIO_ENDPOINT"],
-        access_key=os.environ["MINIO_ACCESS_KEY"],
-        secret_key=os.environ["MINIO_SECRET_KEY"],
-        secure=False,
+        endpoint.netloc,
+        access_key=os.environ["AWS_ACCESS_KEY_ID"],
+        secret_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        secure=endpoint.scheme == "https",
     )
     objects = client.list_objects(os.environ["BUCKET_NAME"], prefix="raw/", recursive=True)
     frames = [storage_backend.read(obj.object_name, format="parquet") for obj in objects]

@@ -1,6 +1,6 @@
 """Shared Parquet serialization helpers for storage handlers.
 
-MinioStorageHandler and GcsStorageHandler both read/write polars
+S3CompatibleStorageHandler and GcsStorageHandler both read/write polars
 DataFrames as Parquet bytes — the bucket/object I/O differs per SDK, but
 this conversion is identical, so it's extracted here (DRY) instead of
 duplicated in both files.
