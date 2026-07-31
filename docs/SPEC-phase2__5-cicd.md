@@ -45,7 +45,7 @@ class FakeWikiEventsHandler:
 │   ├── setup Python + Java (Spark needs a JVM)
 │   ├── docker compose up -d (pubsub-emulator, minio) — local-stack/docker-compose.yml
 │   ├── pip install -r requirements.txt
-│   ├── pytest tests/ (uses FakeWikiEventsHandler, PubSubEmulatorHandler, MinioStorageHandler)
+│   ├── pytest tests/ (uses FakeWikiEventsHandler, PubSubEmulatorHandler, S3CompatibleStorageHandler)
 │   └── docker compose down -v (always runs, even if tests fail)
 │
 └── job: deploy (only via manual workflow_dispatch, input `confirm_deploy=true`)

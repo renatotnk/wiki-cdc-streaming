@@ -30,7 +30,7 @@ Continuously consume Wikipedia's `recentchange` feed, publish each event to the 
 | `WikiEventsHandler` | Connect to the SSE, parse the JSON payload line by line, reconnect with backoff on drop | — (source, has no backend contract) |
 | `PubSubEmulatorHandler` | Publish/consume via Pub/Sub Emulator | `MessagingBackend` |
 | `PubSubCloudHandler` | Publish/consume via real Pub/Sub | `MessagingBackend` |
-| `MinioStorageHandler` | Write/read files in MinIO | `StorageBackend` |
+| `S3CompatibleStorageHandler` | Write/read files against any S3-compatible endpoint — serves **both** `minio` and `s3` backends (Section 4.2 of `SPEC-agnostic-architecture.md`), differing only by whether `S3_ENDPOINT_URL` is set | `StorageBackend` |
 | `GcsStorageHandler` | Write/read files in GCS | `StorageBackend` |
 
 Selection factory (DRY — a single point of backend decision, never scattered through the code):
@@ -42,11 +42,17 @@ def get_messaging_backend() -> MessagingBackend:
     return {"emulator": PubSubEmulatorHandler, "cloud": PubSubCloudHandler}[backend]()
 
 def get_storage_backend() -> StorageBackend:
-    backend = os.environ["STORAGE_BACKEND"]  # "minio" | "gcs"
-    return {"minio": MinioStorageHandler, "gcs": GcsStorageHandler}[backend]()
+    backend = os.environ["STORAGE_BACKEND"]  # "minio" | "s3" | "gcs"
+    if backend in ("minio", "s3"):
+        return S3CompatibleStorageHandler()  # reads S3_ENDPOINT_URL itself — set for minio, unset for s3
+    return {"gcs": GcsStorageHandler}[backend]()
 ```
 
 No other module should read `MESSAGING_BACKEND`/`STORAGE_BACKEND` directly — always through this factory (avoids duplicating selection logic, DRY principle).
+
+### 3.1 Retrofit note (this phase was already implemented with only `minio`/`gcs`)
+
+If `MinioStorageHandler` already exists as a standalone class from an earlier implementation pass, rename it to `S3CompatibleStorageHandler` and parametrize it with an optional endpoint rather than creating a third, separate class — the whole point of the `StorageBackend` interface (P2) is that this kind of addition should be small and additive, not a rewrite. Concretely: add `S3_ENDPOINT_URL` (optional) and `AWS_REGION` (required only when unset) to its constructor/config read, update `backend_factory.py` as above, add the new `.env.example` variables (Section 8), and add a test confirming `STORAGE_BACKEND=s3` with no endpoint set resolves to the real AWS S3 client config. Nothing in `producer/`, `consumer/`, or any downstream phase should need to change — they only ever call the `StorageBackend` interface.
 
 ## 4. Data flow
 
@@ -98,14 +104,15 @@ Fields from the original event (Section 3 of the architecture SPEC) **plus** ing
 | Variable | Values | Required |
 |---|---|---|
 | `MESSAGING_BACKEND` | `emulator` \| `cloud` | Yes |
-| `STORAGE_BACKEND` | `minio` \| `gcs` | Yes |
+| `STORAGE_BACKEND` | `minio` \| `s3` \| `gcs` | Yes |
 | `PUBSUB_PROJECT_ID` | string | Yes |
 | `PUBSUB_EMULATOR_HOST` | host:port | Only if `emulator` |
 | `BUCKET_NAME` | string | Yes |
-| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | string | Only if `minio` |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | string | Only if `minio` or `s3` |
+| `S3_ENDPOINT_URL` | URL | Only if `minio` (e.g., `http://localhost:9000`); leave unset for `s3` |
+| `AWS_REGION` | string | Only if `s3` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | path | Only if `gcs` |
 | `WIKI_STREAM_URL` | URL | No (default: official endpoint from Section 3) |
-| `WIKI_STREAM_CONTACT` | string (email/URL) | Yes — sent in the request's `User-Agent` per Wikimedia's User-Agent policy; no default, requests without it get a 403 |
 | `CONSUMER_FLUSH_SIZE` | int | No (default: 500) |
 | `CONSUMER_FLUSH_INTERVAL_SECONDS` | int | No (default: 60) |
 
@@ -131,7 +138,7 @@ src/
 │   │   ├── pubsub_emulator_handler.py
 │   │   └── pubsub_cloud_handler.py
 │   └── storage/
-│       ├── minio_storage_handler.py
+│       ├── s3_compatible_storage_handler.py   # serves both minio and s3 (Section 3.1)
 │       └── gcs_storage_handler.py
 ├── producer/
 │   └── main.py
@@ -153,6 +160,9 @@ src/
 4. **Backend swap without code change**
    Given the producer/consumer code already implemented, When I switch `MESSAGING_BACKEND=emulator` to `MESSAGING_BACKEND=cloud` (with matching credentials), Then the pipeline works without any change to `src/producer/`, `src/consumer/`, or `src/shared/`.
 
+4a. **Three-way storage swap without code change**
+   Given the same producer/consumer code, When I set `STORAGE_BACKEND` to each of `minio`, `s3`, and `gcs` in turn (with matching credentials), Then the pipeline writes to the correct destination in all three cases, with no change to any source file — only `.env` differs.
+
 5. **Clean shutdown**
    Given the pipeline running locally, When I run `docker-compose down`, Then no process, container, or orphaned volume remains active.
 
@@ -164,6 +174,7 @@ src/
 - `tests/test_wiki_events_handler.py`: parsing of a valid payload and a malformed payload (must not crash the handler, must log `WARNING` and continue).
 - `tests/test_deduplication.py`: the `_event_id` cache correctly discards redeliveries.
 - `tests/test_ingestion_smoke.py`: runs the local stack for a short period (via docker-compose in CI) and validates published count == persisted count.
+- `tests/test_s3_compatible_storage_handler.py`: confirms `S3CompatibleStorageHandler` builds a MinIO-pointed client when `S3_ENDPOINT_URL` is set, and a real-AWS-pointed client when it's unset — without needing a real AWS account to run in CI (mock the client construction, not the network call).
 
 ## 13. Operating commands
 

@@ -1,30 +1,29 @@
-# SPEC — Phase 4: Gold (Dimensional Modeling + Streamlit Dashboard)
+# SPEC — Phase 4: Gold (Dimensional Modeling via Spark Declarative Pipelines + Streamlit Dashboard)
 
-**Depends on:** `SPEC-agnostic-architecture.md` (principles P1–P8, conventions 9.1–9.5), `SPEC-phase3-silver-cdf.md` (CDF enabled on silver, the Kimball-ready modeling decision from Section 3, `silver_recentchange.contract.yaml` contract, `BaseDeltaIngestor` base class).
+**Depends on:** `SPEC-agnostic-architecture.md` (principles P1–P8, conventions 9.1–9.5.1), `SPEC-phase3-silver-cdf.md` (CDF enabled on silver, the Kimball-ready modeling decision, `silver_recentchange.contract.yaml` contract), `SPEC-phase2-bronze.md` (`bronze_dim_wiki_reference`).
 **Does not redecide anything already fixed in those documents — only references them.**
 
 ---
 
 ## 1. Objective
 
-Model silver as an explicit Kimball star schema, materialize it incrementally via `GoldIngestor`, and deliver a Streamlit dashboard for visualization — closing the month's analytical-consumption loop. Feature store and ML projects are explicitly out of scope for this round.
+Model silver as an explicit Kimball star schema, materialize it incrementally as a Spark Declarative Pipeline — using SDP's Auto CDC flow for the dimensions (native SCD Type 1/2 support) and a plain append flow for the fact table — and deliver a Streamlit dashboard for visualization. Feature store and ML projects remain explicitly out of scope.
 
 ## 2. Scope
 
 **In scope:**
 - Dimensional modeling (star schema) with an exportable ER diagram.
-- `GoldIngestor`, inheriting from `BaseDeltaIngestor`, reading silver's CDF incrementally.
-- Surrogate key resolution for dimensions, with incremental upsert.
-- A Streamlit dashboard with a minimal set of panels answering the stakeholder questions already mapped in this phase's theory.
+- `dim_editor`, `dim_page`, `dim_wiki` materialized via SDP's Auto CDC (`create_auto_cdc_flow`/`CREATE FLOW ... AUTO CDC`).
+- `dim_wiki` enriched by joining the stream-derived wiki code against `bronze_dim_wiki_reference` (Phase 2).
+- `fact_edit_event` materialized via a plain append flow (no CDC/SCD — see Section 4 for why).
+- A Streamlit dashboard with the panels already mapped to stakeholder questions.
 
-**Out of scope (left for a future project, not this round):**
-- Feature store (e.g., `gold_editor_features` with rolling windows for contributor churn).
-- Any ML model (anomaly/vandalism detection, trend prediction).
-- A new dashboard or additional layer to serve that future ML project — when it exists, it will have its own SPEC.
+**Out of scope (left for a future project):**
+- Feature store, any ML model, or a new dashboard/layer to serve them.
 
-## 3. Modeling: Kimball star schema
+## 3. Modeling: unchanged star schema, same ER diagram
 
-Fact grain: **one edit event** (the same grain as silver — gold doesn't aggregate, it dimensions).
+Same grain, same tables and relationships as the previous draft — see the ER diagram below, only the `dim_wiki` attributes gained two enriched fields (`language_name`, `project_type`) sourced from `bronze_dim_wiki_reference`.
 
 ```mermaid
 erDiagram
@@ -64,7 +63,8 @@ erDiagram
     dim_wiki {
         string wiki_key PK
         string wiki_code
-        string language_guess
+        string language_name
+        string project_type
     }
     dim_date {
         int date_key PK
@@ -82,92 +82,101 @@ erDiagram
     }
 ```
 
-This diagram should also be saved as `docs/gold-model-diagram.mmd` — a standalone Mermaid file, exportable to PNG/SVG (via `mmdc` or mermaid.live) for use in the portfolio README.
+Save as `docs/gold-model-diagram.mmd` (unchanged requirement).
 
-### 3.1 Modeling decisions
+### 3.1 Modeling decisions (unchanged except where noted)
 
-- **`hour_of_day` is degenerate, not its own dimension.** With only 24 possible values and no additional attribute, creating `dim_hour` would be a trivial dimension with no real gain — KISS.
-- **`dim_change_type` is a junk dimension** combining `type` and `is_bot` (both low-cardinality and correlated). It doesn't include `is_minor` because that field was never captured in the bronze/silver contract — adding it would require reopening Phases 1–3, which we won't do this round. It's recorded as a possible future extension, not implemented.
-- **All dimensions use Type 1 SCD** (simple upsert, no versioning). Different from the SCD2 exercise on `dim_customer` in Week 1: there, a business attribute changed over time (e.g., customer address) that justified versioning. Here, `user`/`title`/`wiki_code` are essentially stable identity — the change history is already preserved upstream, in silver (insert-only + CDF). Gold doesn't need to duplicate that responsibility.
-- **Deterministic (hash-based) surrogate key, not sequential.** `editor_key = sha2(user_name, 256)` (truncated), instead of a centralized incrementing counter. This is what makes the upsert safe in an incremental, distributed streaming context: there's no need to coordinate a single sequence generator, and the same natural key always produces the same surrogate key, on any run, making the process idempotent by construction.
-- **`dim_date` and `dim_change_type` are static/seed**, not derived incrementally from streaming — generated once by `scripts/seed_gold_dimensions.py` (the project's date range; fixed `type`×`is_bot` combinations). Only `dim_editor`, `dim_page`, and `dim_wiki` are updated by `GoldIngestor` on every batch.
+- **`hour_of_day` degenerate, `dim_change_type` a junk dimension** — unchanged reasoning from the prior draft.
+- **`dim_wiki` is now a conformed dimension from two sources**: `wiki_code` and `first_seen_date` derive from the fact stream (via silver); `language_name`/`project_type` come from `bronze_dim_wiki_reference`. This is exactly the realistic multi-source scenario the Section 3 addition in Phase 2 was meant to introduce.
+- **`dim_date` and `dim_change_type` remain static/seed**, generated once by `scripts/seed_gold_dimensions.py` — unaffected by the SDP move.
 
-## 4. Why we don't need Kimball's classic "Unknown Member" pattern
+## 4. Auto CDC applies to dimensions, not the fact table
 
-Kimball recommends a `-1 / Unknown` row in every dimension for when a fact arrives referencing a natural key the dimension doesn't yet know (common when fact and dimension come from different source systems, arriving out of order). That's not the case here: `GoldIngestor` always upserts dimensions **before** resolving the fact's keys, within the same micro-batch — every natural key present in the batch has already been inserted or already existed by the time of resolution. A null foreign key on the fact would therefore be a sign of a bug (broken order of operations), not an expected case — and it's treated as such: fail-fast, not a silent "Unknown" row.
+SCD (Type 1/2) is a **dimensional** modeling concept — it governs how a dimension's attributes are versioned (or not) as its natural-key member changes over time. A fact row is an immutable event; it's never "updated" once written, so CDC/SCD semantics don't apply to it. SDP's Auto CDC (`create_auto_cdc_flow` in Python, `CREATE FLOW ... AUTO CDC ... APPLY AS ... SEQUENCE BY ... STORED AS SCD TYPE 1|2` in SQL) is designed exactly for the case we already had for `dim_editor`/`dim_page`/`dim_wiki` — upsert by natural key, with the SCD type as a single parameter. The fact table uses a plain append flow instead: no upsert, no SCD, just incremental inserts.
 
-## 5. `GoldIngestor` (inherits from `BaseDeltaIngestor`)
+**Why Type 1, not Type 2, for these dimensions:** unchanged reasoning from the prior draft — `user_name`/`title`/`wiki_code` are essentially stable identity, and the actual change history already lives upstream in silver via CDF. Switching to Type 2 later is a one-line change (`stored_as_scd_type=2` / `STORED AS SCD TYPE 2`) if a real need for dimension-attribute history ever arises — this is the concrete portfolio talking point Auto CDC buys us: SCD type becomes a parameter, not a hand-rolled merge strategy.
 
-```python
-# src/lib/ingestors/delta_ingestors.py (continued — same base class as Phases 2 and 3)
+## 5. Why we still don't need Kimball's classic "Unknown Member" pattern
 
-class GoldIngestor(BaseDeltaIngestor):
-    """Reads silver's CDF incrementally, resolves/updates dimensions (upsert
-    by hash surrogate key), and materializes the fact. The only ingestor that
-    writes to multiple Delta tables from a single incremental read."""
+Unchanged: Auto CDC processes each batch's upserts before the fact append flow resolves foreign keys (SDP computes the dependency DAG so `dim_*` updates happen upstream of `fact_edit_event` in the same run) — every natural key in the batch has a resolvable key by fact-resolution time. A null FK is still a bug signal, not an expected case, and still fails fast rather than falling back to a silent "Unknown" row.
 
-    def read_stream(self) -> DataFrame:
-        """readStream over silver with .option('readChangeFeed', 'true')."""
-        ...
+## 6. Pipeline definitions
 
-    def transform(self, df: DataFrame) -> DataFrame:
-        """Computes length_delta and the hash surrogate keys (editor_key,
-        page_key, wiki_key). Doesn't resolve against the dimension tables yet —
-        that happens in write_stream(), where upsert and resolution need to
-        stay within the same batch transaction."""
-        ...
-
-    def write_stream(self, df: DataFrame) -> StreamingQuery:
-        """Overrides the default: uses foreachBatch to write to several
-        Delta tables from the same micro-batch (dimensions via MERGE,
-        fact via append) — see Section 5.1."""
-        ...
-```
-
-### 5.1 Why `foreachBatch`, and why it's safe under retry
-
-Spark's standard `writeStream` writes to a single sink. To write to several Delta tables (three dimensions + one fact) from a single incremental read, the correct mechanism is `foreachBatch(func)`, where `func(batch_df, batch_id)` runs like an ordinary batch and can perform multiple writes:
+### 6.1 Python (`pipelines/gold/gold_star_schema.py`)
 
 ```python
-def _write_batch(batch_df: DataFrame, batch_id: int) -> None:
-    upsert_dimension(batch_df, "dim_editor", natural_key="user_name", surrogate_key="editor_key")
-    upsert_dimension(batch_df, "dim_page", natural_key="title", surrogate_key="page_key")
-    upsert_dimension(batch_df, "dim_wiki", natural_key="wiki_code", surrogate_key="wiki_key")
-    fact_df = resolve_fact_keys(batch_df)  # join against the just-updated dimensions
-    fact_df.write.format("delta").mode("append").save(fact_path)
+from pyspark import pipelines as dp
+from pyspark.sql.functions import sha2, col
+
+@dp.table(name="dim_editor_staging")
+def dim_editor_staging():
+    return dp.read_stream("silver_recentchange").select(
+        sha2(col("user"), 256).alias("editor_key"),
+        col("user").alias("user_name"),
+        col("bot").alias("is_bot"),
+        col("_silver_loaded_at").alias("_sequence"),
+    )
+
+dp.create_auto_cdc_flow(
+    target="dim_editor",
+    source="dim_editor_staging",
+    keys=["editor_key"],
+    sequence_by="_sequence",
+    stored_as_scd_type=1,   # flip to 2 if dimension-attribute history is ever needed
+)
+
+# dim_page, dim_wiki follow the same staging + create_auto_cdc_flow pattern.
+# dim_wiki's staging additionally joins bronze_dim_wiki_reference on wiki_code
+# for language_name/project_type (Section 3.1).
+
+@dp.append_flow(target="fact_edit_event")
+def fact_edit_event_flow():
+    return (
+        dp.read_stream("silver_recentchange")
+        .join(dp.read("dim_editor"), ...)
+        .join(dp.read("dim_page"), ...)
+        .join(dp.read("dim_wiki"), ...)
+        # ... resolves all FKs, computes length_delta
+    )
 ```
 
-If any write inside `_write_batch` fails, the streaming checkpoint **does not advance** — Spark retries the entire batch on the next attempt. This is only safe because the dimension upsert is deterministic (hash surrogate key, not sequential): reprocessing the same batch produces exactly the same result, never a second row for the same member. If we were using a centralized incrementing counter, a retry could generate different keys for the same member — another reason for the Section 3.1 decision.
+### 6.2 SQL (`pipelines/gold/gold_star_schema.sql`)
 
-## 6. Data Contract
+```sql
+CREATE OR REFRESH STREAMING TABLE dim_editor_staging AS
+SELECT
+  sha2(user, 256) AS editor_key,
+  user AS user_name,
+  bot AS is_bot,
+  _silver_loaded_at AS _sequence
+FROM STREAM silver_recentchange;
 
-`contracts/gold_star_schema.contract.yaml` (P8) — a single file covering the fact table and the three incremental dimensions (`dim_date`/`dim_change_type` don't need a contract since they're static and trivial). Structural: schema of each table + type/nullability of each key. No null FK is a value tolerated by the contract — a violation is fail-fast (Section 4).
+CREATE FLOW dim_editor_flow
+AS AUTO CDC INTO dim_editor
+FROM STREAM dim_editor_staging
+KEYS (editor_key)
+SEQUENCE BY _sequence
+STORED AS SCD TYPE 1;
 
-## 7. Streamlit dashboard
+-- dim_page, dim_wiki follow the same staging + AUTO CDC pattern;
+-- dim_wiki_staging joins bronze_dim_wiki_reference on wiki_code.
 
-- **Reads via DuckDB, not Spark.** The dashboard doesn't need a SparkSession to serve interactive queries — it reuses the same lightweight-read pattern already established in `scripts/inspect_bronze.py` (Phase 2): `SELECT ... FROM delta_scan('<uri>')`. The URI is resolved via `StorageBackend.resolve_uri()` (DRY — no duplicated path/credential logic).
-- **Config identical to the rest of the pipeline:** `STORAGE_BACKEND=minio|gcs` switches where the dashboard reads from, with no code change — the same principle as every previous phase.
+CREATE FLOW fact_edit_event_flow
+AS INSERT INTO fact_edit_event BY NAME
+SELECT ...
+FROM STREAM silver_recentchange
+JOIN dim_editor USING (editor_key)
+JOIN dim_page USING (page_key)
+JOIN dim_wiki USING (wiki_key);
+```
 
-### 7.1 Panels (answering the stakeholder questions mapped in this phase's theory)
+## 7. Data Contract
 
-| Panel | Question it answers | Source |
-|---|---|---|
-| Edit volume over time, per wiki | Which wikis are growing fastest? | `fact_edit_event` + `dim_date` + `dim_wiki` |
-| Bot vs. human proportion | What's the composition of automated edits? | `fact_edit_event` + `dim_change_type` |
-| Distribution by hour of day | When is edit volume highest (seasonality)? | `fact_edit_event.hour_of_day` |
-| Top pages by absolute `length_delta` | Which pages had large/suspicious edits recently? | `fact_edit_event` + `dim_page` |
-| Top editors by recent volume | Who are the most active contributors right now? | `fact_edit_event` + `dim_editor` |
+`contracts/gold_star_schema.contract.yaml` (P8) — unchanged in purpose, now also covering `dim_wiki`'s two enriched fields.
 
-None of these panels implements the feature store or the churn/anomaly model discussed earlier — they're descriptive, a foundation for when that future project exists.
+## 8. Streamlit dashboard
 
-## 8. Configuration
-
-| Variable | Values | Required |
-|---|---|---|
-| `COMPUTE_BACKEND` | `local` \| `databricks` (inherited) | Yes |
-| `STORAGE_BACKEND` | `minio` \| `gcs` (inherited) | Yes |
-| `GOLD_FACT_TABLE_PATH` / `GOLD_DIM_*_TABLE_PATH` | logical paths | Yes |
-| `GOLD_CHECKPOINT_PATH` | `GoldIngestor`'s checkpoint path | Yes |
+Unchanged from the prior draft: reads via DuckDB (`delta_scan()`), same panels (Section 7.1 of the previous version — edit volume by wiki, bot vs. human proportion, hour-of-day distribution, top pages by `length_delta`, top editors by recent volume). None of this changes with the move to SDP, since the dashboard reads finished Delta tables regardless of how they were materialized.
 
 ## 9. Code structure for this phase
 
@@ -175,58 +184,59 @@ None of these panels implements the feature store or the churn/anomaly model dis
 contracts/
 └── gold_star_schema.contract.yaml
 docs/
-└── gold-model-diagram.mmd            # same diagram as Section 3, standalone exportable
-src/lib/ingestors/
-└── delta_ingestors.py                # + GoldIngestor(BaseDeltaIngestor)
-src/transform_gold/
-├── schema.py                         # fact/dimension schemas
-├── surrogate_keys.py                 # hash_surrogate_key(), upsert_dimension(), resolve_fact_keys()
-└── cli.py
+└── gold-model-diagram.mmd
+pipelines/
+└── gold/
+    ├── gold_star_schema.py
+    └── gold_star_schema.sql
 scripts/
-└── seed_gold_dimensions.py           # populates dim_date/dim_change_type once
+└── seed_gold_dimensions.py           # dim_date, dim_change_type — unchanged, still a one-time seed
 dashboard/
-├── app.py                            # Streamlit, panels from Section 7.1
-└── data_access.py                    # DuckDB wrapper + StorageBackend.resolve_uri()
+├── app.py
+└── data_access.py
 ```
 
 ## 10. Acceptance criteria (Given/When/Then)
 
 1. **Fact without loss**
-   Given a batch from silver's CDF, When `GoldIngestor.run()` executes, Then `fact_count_this_batch == silver_valid_rows_processed_this_batch`.
+   Given a batch from silver's CDF, When the pipeline runs, Then `fact_count_this_batch == silver_valid_rows_processed_this_batch`.
 
 2. **No null foreign key**
-   Given any row in `fact_edit_event`, When I inspect the fact table after a run, Then none of the foreign keys (`editor_key`, `page_key`, `wiki_key`, `date_key`, `change_type_key`) is null — a violation is fail-fast, not a silent "Unknown" row.
+   Given any row in `fact_edit_event`, When inspected after a run, Then no foreign key is null — a violation fails the update, not a silent "Unknown" row.
 
-3. **Idempotent upsert under retry**
-   Given the same batch processed twice (simulating a failure and re-run), When `GoldIngestor.run()` runs again, Then no dimension gains a second row for the same member (same hash surrogate key on both runs).
+3. **SCD type is a one-line change**
+   Given `dim_editor`'s Auto CDC flow, When `stored_as_scd_type`/`STORED AS SCD TYPE` is changed from 1 to 2, Then historical versions of an editor's attributes begin being retained, with no other code change required.
 
-4. **Exportable diagram**
-   Given `docs/gold-model-diagram.mmd`, When processed by `mmdc` (Mermaid CLI), Then it generates a valid PNG/SVG with no syntax error.
+4. **Dimension enrichment from a second source**
+   Given a new snapshot in `bronze_dim_wiki_reference`, When the pipeline runs, Then `dim_wiki`'s `language_name`/`project_type` reflect it for matching `wiki_code`s.
 
-5. **Dashboard doesn't depend on Spark**
-   Given the Streamlit dashboard running, When any panel is loaded, Then no SparkSession is created — only DuckDB queries via `delta_scan()`.
+5. **Exportable diagram**
+   Given `docs/gold-model-diagram.mmd`, When processed by `mmdc`, Then it generates a valid PNG/SVG.
 
-6. **Portability**
-   Given the same `GoldIngestor` and dashboard code, When I run it with `STORAGE_BACKEND=minio` and, separately, `STORAGE_BACKEND=gcs`, Then the result is identical, with no change to `src/transform_gold/` or `dashboard/`.
+6. **Dashboard doesn't depend on Spark**
+   Unchanged from the prior draft.
+
+7. **Portability**
+   Given the same pipeline spec, When run locally and on Databricks, Then results are identical with no source-file change.
 
 ## 11. Required tests
 
-- `tests/test_surrogate_keys.py`: the same natural key always produces the same hash key; different keys never collide for the test set.
-- `tests/test_gold_ingestor.py`: runs `GoldIngestor` against a local silver fixture, validates acceptance criteria 1–3 above.
-- `tests/test_dashboard_data_access.py`: `data_access.py` returns the correct result against a local gold fixture, with no network dependency.
+- `tests/test_auto_cdc_dimensions.py`: validates SCD Type 1 upsert behavior (no duplicate member rows) and confirms switching to Type 2 in a test fixture correctly retains history.
+- `tests/test_gold_pipeline.py`: `spark-pipelines dry-run` for both variants, plus a real local run validating acceptance criteria 1–2.
+- `tests/test_dashboard_data_access.py`: unchanged from the prior draft.
 
 ## 12. Operating commands
 
 ```bash
-# One-time seed of the static dimensions (run once, or when the date range changes)
-python scripts/seed_gold_dimensions.py
+# Validate (bronze, silver, gold datasets, all in one spec)
+spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
 
-# Process the available increment from silver's CDF
-python -m src.transform_gold.cli
+# Run
+spark-pipelines run --spec pipelines/spark-pipeline.yml
 
 # Run the dashboard locally
 streamlit run dashboard/app.py
 
-# Export the model diagram to PNG (requires @mermaid-js/mermaid-cli)
+# Export the model diagram
 mmdc -i docs/gold-model-diagram.mmd -o docs/gold-model-diagram.png
 ```

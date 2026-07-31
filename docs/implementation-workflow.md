@@ -9,6 +9,10 @@ A repeatable process for implementing, verifying, and committing each phase of t
 Done once, at the start of the project:
 
 ```bash
+# 0. Prerequisite: PySpark/Spark Declarative Pipelines needs a JVM — not covered by pip/uv
+java -version   # needs JDK 17 or newer (Spark 4.1+/SDP requirement — stricter than plain PySpark)
+                # install one if this fails (e.g., via your OS package manager, or https://adoptium.net)
+
 # 1. Virtual environment with uv
 uv venv .venv --prompt cdcstream-wikipedia-project
 source .venv/bin/activate   # or .venv\Scripts\activate on Windows

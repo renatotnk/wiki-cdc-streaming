@@ -87,35 +87,47 @@ class StorageBackend(Protocol):
 
 | Implementation | Real backend | Resulting URI |
 |---|---|---|
-| `MinioStorageBackend` | MinIO (Docker, S3-compatible) | `s3a://<bucket>/<logical_path>` |
+| `S3CompatibleStorageHandler` | MinIO (Docker, local) **or** real AWS S3 — same class, see below | `s3a://<bucket>/<logical_path>` |
 | `GcsStorageBackend` | Google Cloud Storage | `gs://<bucket>/<logical_path>` |
 
-**Config:** `STORAGE_BACKEND=minio|gcs`, `BUCKET_NAME`, credentials via environment variable (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for MinIO; `GOOGLE_APPLICATION_CREDENTIALS` for GCS). Swapping backend **does not change any read/write call in the transformation code** — only the value resolved by `resolve_uri()`.
+**Why one class for both MinIO and S3:** MinIO speaks the S3 API — the only structural difference is that MinIO needs a custom endpoint (`fs.s3a.endpoint`) and real S3 doesn't. Rather than duplicating near-identical code across two handler classes, `S3CompatibleStorageHandler` takes an optional endpoint: set → MinIO (or any other S3-compatible store); unset → real AWS S3. This is DRY applied to the handler layer itself, not just to business logic.
 
-### 4.3 Compute interface (Spark)
+**Config:** `STORAGE_BACKEND=minio|s3|gcs`, `BUCKET_NAME`. `minio` and `s3` both resolve to `S3CompatibleStorageHandler`, differing only in whether `S3_ENDPOINT_URL` is set:
 
-```python
-class ComputeBackend(Protocol):
-    def get_session(self) -> SparkSession: ...
-```
+| Variable | `minio` | `s3` | `gcs` |
+|---|---|---|---|
+| `S3_ENDPOINT_URL` | set (e.g., `http://localhost:9000`) | unset | — |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | MinIO credentials | real AWS credentials | — |
+| `AWS_REGION` | ignored | required | — |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | — | required |
+
+Swapping backend **does not change any read/write call in the transformation code** — only the value resolved by `resolve_uri()` and which credentials are picked up.
+
+> **Databricks Free Edition constraint:** external connections and External Volumes on Free Edition currently only support S3-backed storage — not GCS. This means the practical cloud pairing for this project is **Databricks Free Edition + S3**, not Databricks + GCS. GCS remains part of the interface (useful if compute ever moves to a non-Databricks Spark environment on GCP), but isn't usable together with Databricks Free Edition specifically.
+
+### 4.3 Compute interface (Spark Declarative Pipelines)
+
+**Phases 2, 3, and 4 are implemented as Spark Declarative Pipelines (SDP)**, not hand-rolled Structured Streaming jobs. SDP is a genuinely open-source Apache Spark capability (available from Spark 4.1 via the `pyspark.pipelines` module and the `spark-pipelines` CLI) — Databricks' Lakeflow Declarative Pipelines is the same framework extended to run on the managed Databricks Runtime. This is what makes P6 (portability) hold for a declarative pipeline: the same pipeline definition runs via `spark-pipelines run` locally and as a Lakeflow pipeline on Databricks, with no code fork between the two.
 
 | Implementation | Real backend | When to use |
 |---|---|---|
-| `LocalComputeBackend` | Spark `local[*]` | Default, development and CI |
-| `DatabricksComputeBackend` | Databricks Free Edition (serverless) or cluster | Portability validation, occasional use |
+| Local pipeline run | `spark-pipelines run` against local Spark 4.1+ (`local[*]`) | Default, development and CI |
+| Lakeflow Declarative Pipelines | Same pipeline spec, run on Databricks (Free Edition or cluster) | Portability validation, occasional use |
 
-**Config:** `COMPUTE_BACKEND=local|databricks`. The transformation notebook/job (Phases 2, 3, and 4) only imports `get_session()` — no transformation logic references the backend directly.
+**Config:** the pipeline spec (`spark-pipeline.yml`) and its `configuration:` block hold any environment-varying value (storage path, checkpoint location) — pipeline source files (Python or SQL) never branch on environment. Each phase provides **both a Python and a SQL variant** of its pipeline definitions, functionally equivalent — pick whichever fits the portfolio narrative better; this SPEC doesn't mandate one over the other.
 
-> **Note:** Databricks Free Edition runs on serverless compute with a fair-usage quota (it's no longer the classic cluster model with time-based auto-termination). This must be validated during Phase 2 implementation regarding how to set up external storage (GCS) credentials from serverless compute.
+> **Prerequisite:** Spark 4.1+ and Java 17+ (not the JDK 8/11 range mentioned for earlier PySpark versions). Install via `uv add "pyspark[pipelines]" delta-spark`.
+
+> **Compute and storage are orthogonal — Databricks is not a storage location.** Regardless of where the pipeline runs, data always lives wherever `StorageBackend` resolves to (MinIO locally, S3 in the cloud via Databricks External Volumes) — the pipeline spec's `configuration` block just points at that path. Unity Catalog External Volumes, when used on the Databricks side, are a governance/access layer registered on top of that S3 bucket path, not an alternative place where the bytes are stored. This applies identically to Phases 2, 3, and 4.
 
 ### 4.4 Data Contracts (schema boundaries between layers)
 
 Unlike the interface contracts above (which deal with *pluggable backends*), a **data contract** deals with the *shape of the data* at a boundary between layers — it's what guarantees that whoever consumes bronze knows exactly what to expect from it, in an auditable, versioned way, instead of inferring it from code.
 
-- Each relevant boundary (`raw→bronze`, `bronze→silver`, `silver→gold`) has a YAML file in `contracts/`, e.g., `contracts/bronze_recentchange.contract.yaml`, containing: contract version, required fields with type/nullability, and expected enum values (e.g., `type ∈ {edit, new, log, categorize}`). The `silver→gold` boundary (`gold_star_schema.contract.yaml`) covers the fact table and the incremental dimensions — static/seed dimensions (`dim_date`, `dim_change_type`) don't need their own contract since they're trivial and not derived from streaming.
+- Each relevant boundary (`raw→bronze`, `bronze→silver`, `silver→gold`) has a YAML file in `contracts/`, e.g., `contracts/bronze_recentchange.contract.yaml`, containing: contract version, required fields with type/nullability, and expected enum values (e.g., `type ∈ {edit, new, log, categorize}`). The `silver→gold` boundary (`gold_star_schema.contract.yaml`) covers the fact table and the incremental dimensions — static/seed dimensions (`dim_date`, `dim_change_type`) don't need their own contract since they're trivial and not derived from streaming; `dim_wiki_reference` (Section 7, Phase 2) has its own contract since it comes from a genuinely external source.
 - **Two kinds of deviation, two different treatments:**
   - *New, non-contracted field* (genuine schema drift) → tolerated, captured in `_extra_fields`, logged as `INFO`. Never brings the pipeline down.
-  - *Contracted field missing or changed to an incompatible type* (contract breach) → fail-fast, `ERROR` log, same P4/fail-fast principle already used in Phase 2 for structural corruption.
+  - *Contracted field missing or changed to an incompatible type* (contract breach) → fail-fast, same P4/fail-fast principle already used in Phase 2 for structural corruption — expressed as an `@expect_or_fail`/`EXPECT ... ON VIOLATION FAIL UPDATE` pipeline expectation (Python/SQL respectively), not a custom check.
 - The contract is the source of truth for the schema table documented in each phase SPEC — the prose table references the file, it doesn't duplicate the types.
 - Business rules (e.g., `type` enum, value ranges) used in the Phase 3 Data Quality checks are informed by the same contract, avoiding the same constant (e.g., the list of valid `type` values) being defined in two places (DRY).
 
@@ -153,25 +165,28 @@ data-pipeline-portfolio/
 │   └── docker-compose.yml                  ← Pub/Sub Emulator + MinIO
 ├── infra/terraform/                        ← optional cloud resources (Always Free where applicable)
 ├── src/
-│   ├── interfaces/                         ← contracts from Section 4
-│   │   ├── messaging.py
-│   │   ├── storage.py
-│   │   └── compute.py
+│   ├── interfaces/                         ← messaging.py, storage.py contracts from Section 4 (compute.py removed — SDP owns the compute layer now)
 │   ├── shared/                              ← code reused across phases (DRY, convention 9.3)
 │   ├── handlers/                            ← external integrations (convention 9.2)
-│   ├── lib/
-│   │   └── ingestors/                       ← convention 9.5
-│   │       ├── delta_ingestors.py           # BaseDeltaIngestor, BronzeIngestor, SilverIngestor, GoldIngestor
-│   │       └── utils.py
-│   ├── producer/                           ← consumes SSE, publishes (Handler, not Ingestor)
-│   ├── consumer/                           ← reads messaging, writes raw (Handler, not Ingestor)
-│   ├── transform_bronze/                   ← schema.py, cli.py — uses BronzeIngestor
-│   ├── transform_silver/                   ← schema.py, dq_engine.py, dq_rules/, cli.py — uses SilverIngestor
-│   └── transform_gold/                     ← schema.py, surrogate_keys.py, cli.py — uses GoldIngestor
+│   ├── producer/                           ← consumes SSE, publishes (Handler)
+│   └── consumer/                           ← reads messaging, writes raw (Handler)
+├── pipelines/                                ← Spark Declarative Pipelines (convention 9.5)
+│   ├── spark-pipeline.yml                    # one spec, all phases as one DAG (see phase SPECs for per-phase detail)
+│   ├── bronze/
+│   │   ├── bronze_recentchange.py            # pick one: Python variant
+│   │   ├── bronze_recentchange.sql           # or: SQL variant
+│   │   ├── dim_wiki_reference.py             # new: batch dimension from an external source (Section 7, Phase 2)
+│   │   └── dim_wiki_reference.sql
+│   ├── silver/
+│   │   ├── silver_recentchange.py
+│   │   └── silver_recentchange.sql
+│   └── gold/
+│       ├── gold_star_schema.py
+│       └── gold_star_schema.sql
 ├── scripts/                                 ← local utilities (inspection, seed) — never a phase deliverable
 │   ├── inspect_bronze.py
 │   ├── inspect_silver_rejected.py
-│   └── seed_gold_dimensions.py
+│   └── fetch_wiki_sitematrix.py              # new: pulls the external reference snapshot (Section 7, Phase 2)
 ├── dashboard/                                ← Streamlit, outside src/ since it's not part of the data pipeline
 │   ├── app.py
 │   └── data_access.py
@@ -187,8 +202,8 @@ data-pipeline-portfolio/
 | Component | Local mode (default) | Cloud mode (optional) | Cloud cost |
 |---|---|---|---|
 | Messaging | Pub/Sub Emulator | Pub/Sub | ~$0 (within free tier) |
-| Storage | MinIO | GCS | ~$0 (Always Free, 5GB-month) |
-| Compute (bronze/silver/gold) | Local Spark | Databricks Free Edition | $0 (serverless, fair-use quota) |
+| Storage | MinIO | S3 (required for Databricks Free Edition External Volumes) or GCS (non-Databricks Spark on GCP) | ~$0 (S3 free tier covers lab volume; GCS Always Free, 5GB-month) |
+| Compute (bronze/silver/gold) | `spark-pipelines run` (local Spark 4.1+) | Lakeflow Declarative Pipelines (Databricks Free Edition) | $0 (serverless, fair-use quota) |
 | CI | GitHub Actions + docker-compose | — | $0 |
 | Deploy (optional) | — | Databricks Jobs API, manual trigger | $0–low, controlled |
 | Dashboard | Local Streamlit | Streamlit Community Cloud (optional) | $0 |
@@ -210,13 +225,13 @@ No item in this table requires an active credit card beyond the one already tied
   - Given the environment running, When I run `docker-compose down`, Then no process or leftover cost remains.
 - **Full detail:** `SPEC-phase1-ingestion.md`.
 
-### Phase 2 — Bronze (consolidation via Spark)
+### Phase 2 — Bronze (Spark Declarative Pipelines)
 
-- **Objective:** read the raw files from the bucket and consolidate them into a bronze Delta table, idempotent and reprocessable.
-- **Input:** raw Parquet/Delta from Phase 1.
-- **Output:** `bronze_recentchange` Delta table, append-only, same logical partitioning as the raw data.
-- **Decisions already made:** read via `ComputeBackend.get_session()`; no schema transformation beyond typing — bronze is a faithful mirror of raw; Change Data Feed enabled from table creation (consumed incrementally by Phase 3).
-- **Acceptance criterion (high level):** Given N raw files in the bucket, When the bronze job runs (local or Databricks), Then `bronze_count == raw_event_count`, on both compute backends, without changing code.
+- **Objective:** declare the raw files from the bucket as a bronze streaming table (idempotent, reprocessable by construction) via SDP, plus a genuinely external reference dimension (`dim_wiki_reference`) as a batch table refreshed on new-file arrival.
+- **Input:** raw Parquet/Delta from Phase 1; a periodic wiki-metadata snapshot from the Wikimedia sitematrix API for `dim_wiki_reference`.
+- **Output:** `bronze_recentchange` (streaming table, append-only, CDF enabled) + `bronze_dim_wiki_reference` (batch table).
+- **Decisions already made:** implemented as SDP (Python and SQL variants, pick one — convention 9.5.1); no schema transformation beyond typing — bronze mirrors raw faithfully; Change Data Feed enabled from table creation (consumed incrementally by Phase 3).
+- **Acceptance criterion (high level):** Given N raw files in the bucket, When `spark-pipelines run` executes (locally or as a Lakeflow pipeline), Then `bronze_count == raw_event_count`, in both environments, without changing pipeline source files.
 - **Full detail:** `SPEC-phase2-bronze.md`.
 
 ### Phase 2.5 — CI/CD
@@ -230,23 +245,22 @@ No item in this table requires an active credit card beyond the one already tied
 
 ### Phase 3 — Silver (Data Quality + Change Data Feed from bronze)
 
-- **Objective:** consume the **bronze** Change Data Feed incrementally, apply the 6 Data Quality dimensions (accuracy, completeness, consistency, timeliness, validity, uniqueness), route invalid rows to a rejects table, and deliver a silver table ready for direct consumption by analysts (dashboards/ad-hoc analysis), while also serving as the source for the Phase 4 dimensional model.
+- **Objective:** consume the **bronze** Change Data Feed incrementally, apply the 6 Data Quality dimensions (accuracy, completeness, consistency, timeliness, validity, uniqueness) as SDP expectations, route invalid rows to a rejects table, and deliver a silver table ready for direct consumption by analysts (dashboards/ad-hoc analysis), while also serving as the source for the Phase 4 dimensional model.
 - **Input:** Change Data Feed of `bronze_recentchange` (CDF enabled on bronze, no longer only on silver — see updated Phase 2).
 - **Output:** `silver_recentchange` (historical, insert-only, CDF enabled) + `silver_recentchange_rejected`.
 - **Modeling:** neither pure Kimball, Inmon, nor Data Vault. Silver follows a Data-Vault-inspired philosophy (historical, never overwritten) without the hub/link/satellite ceremony — not justified for a single source. A Kimball star schema is reserved for when gold is picked up.
-- **Language split:** Data Quality rules (value-by-value) in **SQL**, since they're simple, declarative logic; CDF reading, orchestration, and materialization in **PySpark** (`SilverIngestor`), since that's the complex part. See the corresponding convention in the phase SPEC.
-- **Decisions already made:** data contract (`contracts/bronze_recentchange.contract.yaml`, P8) validated structurally before DQ rules; optimized writes avoiding unnecessary shuffle/broadcast (detailed in the phase SPEC).
-- **Acceptance criterion (high level):** Given the bronze CDF with new rows, When the silver job runs, Then `bronze_count = silver_ok_count + silver_rejected_count` (P4 invariant), each rejection has a reason traceable to one of the 6 DQ dimensions, and the job processes only the increment (not the whole table).
+- **Decisions already made:** implemented as an SDP pipeline (Python and SQL variants); data contract (`contracts/bronze_recentchange.contract.yaml`, P8) validated structurally as a fail-fast expectation before the DQ expectations; optimized writes avoiding unnecessary shuffle/broadcast (detailed in the phase SPEC).
+- **Acceptance criterion (high level):** Given the bronze CDF with new rows, When the pipeline runs, Then `bronze_count = silver_ok_count + silver_rejected_count` (P4 invariant), each rejection has a reason traceable to one of the 6 DQ dimensions, and the pipeline processes only the increment (not the whole table).
 - **Full detail:** `SPEC-phase3-silver-cdf.md`.
 
 ### Phase 4 — Gold (Dimensional Modeling + Streamlit Dashboard)
 
-- **Objective:** Kimball star schema (`fact_edit_event` + `dim_editor`/`dim_page`/`dim_wiki`/`dim_date`/`dim_change_type`), materialized incrementally via `GoldIngestor`, and a Streamlit dashboard for visualization.
-- **Input:** Change Data Feed of `silver_recentchange`.
+- **Objective:** Kimball star schema (`fact_edit_event` + `dim_editor`/`dim_page`/`dim_wiki`/`dim_date`/`dim_change_type`), materialized incrementally as an SDP pipeline, and a Streamlit dashboard for visualization.
+- **Input:** Change Data Feed of `silver_recentchange`; `bronze_dim_wiki_reference` (Phase 2) for `dim_wiki` enrichment.
 - **Output:** star schema Delta tables + `docs/gold-model-diagram.mmd` (exportable ER diagram) + Streamlit app.
-- **Decisions already made:** Type 1 SCD on all dimensions (history already preserved upstream in silver); deterministic hash-based surrogate key (idempotent under reprocessing, no centralized sequence generator); dashboard reads via DuckDB, not Spark.
+- **Decisions already made:** dimensions (`dim_editor`, `dim_page`, `dim_wiki`) are materialized via SDP's Auto CDC (`create_auto_cdc_flow`/`CREATE FLOW ... AUTO CDC`), which natively supports choosing SCD Type 1 or 2 per dimension — Type 1 is used here (history already preserved upstream in silver); the fact table is a plain append flow, since SCD/CDC semantics don't apply to immutable events; dashboard reads via DuckDB, not Spark.
 - **Out of scope for this phase:** feature store (e.g., `gold_editor_features` for contributor churn) and any ML model — left for a dedicated future project, with its own SPEC.
-- **Acceptance criterion (high level):** Given a batch from the silver CDF, When `GoldIngestor.run()` executes, Then `fact_count == silver_valid_rows_processed` and no foreign key on the fact table is null.
+- **Acceptance criterion (high level):** Given a batch from the silver CDF, When the pipeline runs, Then `fact_count == silver_valid_rows_processed` and no foreign key on the fact table is null.
 - **Full detail:** `SPEC-phase4-gold-consumption.md`.
 
 ---
@@ -275,7 +289,7 @@ The items below **are not part of the main pipeline** and should not be implemen
 
 ### 9.2 Object orientation by integration context
 
-- Every integration with an external service (data source, messaging, storage, database) must be encapsulated in a dedicated *handler* class, named `{Service}Handler` — e.g., `WikiEventsHandler` (consumes the Wikipedia SSE), `PubSubEmulatorHandler`, `MinioStorageHandler`.
+- Every integration with an external service (data source, messaging, storage, database) must be encapsulated in a dedicated *handler* class, named `{Service}Handler` — e.g., `WikiEventsHandler` (consumes the Wikipedia SSE), `PubSubEmulatorHandler`, `S3CompatibleStorageHandler`.
 - A handler is responsible exclusively for communication with that service (connection, retries, payload parsing). Business logic (transformation, validation, rules) never lives inside the handler — the handler only knows how to "talk" to the service.
 - Handlers implement the Section 4 interfaces (`MessagingBackend`, `StorageBackend`, `ComputeBackend`) when applicable — the handler class is the concrete implementation of the contract, not a separate object.
 
@@ -290,23 +304,26 @@ The items below **are not part of the main pipeline** and should not be implemen
 - Function and variable names must be self-explanatory enough that the logic can be understood without needing an extra comment (e.g., `parse_recentchange_event()`, not `process()`).
 - Complex logic (e.g., Phase 3 validation rules, bronze/silver reconciliation) should be broken into named, sequential steps, not a single monolithic function — the goal is for the code to serve as learning-review material, not just a functional implementation.
 
-### 9.5 Ingestors vs. Handlers — when to use inheritance
+### 9.5 Handlers vs. Pipelines — where imperative code ends and SDP begins
 
-- **Handler** (convention 9.2): integrates with an external service (SSE, messaging, storage). One per service, with no hierarchy between them — each talks to something different.
-- **Ingestor**: orchestrates a Spark Structured Streaming job with the shape `readStream → transform → writeStream(checkpoint, Trigger.AvailableNow)`. Lives in `src/lib/ingestors/`, in a single base class (`BaseDeltaIngestor`) from which the layer variants inherit (`BronzeIngestor`, `SilverIngestor`, `GoldIngestor`), in the same file since they are few and small.
-- **Why the distinction matters:** inheritance is only justified when subclasses are genuinely substitutable for the base (same input/output shape, same lifecycle) — a direct application of the Liskov Substitution Principle (see `docs/ENGINEERING-PRINCIPLES.md`). The Phase 1 producer/consumer are not Spark, have no streaming checkpoint — forcing them into the `Ingestor` hierarchy would break that substitutability just to reuse a name. They remain Handlers.
-- `src/lib/ingestors/utils.py` gathers **generic streaming-orchestration utility functions** (checkpoint resolution, result-object construction, common `writeStream` wiring) — reused by any `Ingestor`. Business logic specific to a layer (e.g., Phase 3 DQ rules) doesn't live here — it stays in that phase's own folder (DRY without mixing responsibilities).
+- **Handler** (convention 9.2): integrates with an external service (SSE, messaging, storage). One per service, with no hierarchy between them — each talks to something different. This remains hand-written imperative Python, because Phase 1 (producer/consumer) isn't a Spark job at all — SDP has nothing to offer there.
+- **Pipeline** (Phases 2, 3, 4): declared, not orchestrated by hand. Each phase's `bronze`/`silver`/`gold` tables are defined as SDP datasets (`@dp.table`/`@dp.materialized_view`/`@dp.append_flow`/`@dp.create_auto_cdc_flow` in Python, or `CREATE OR REFRESH STREAMING TABLE`/`CREATE FLOW` in SQL) — Spark computes the dependency DAG and incremental execution itself. There is no custom base class to maintain here; that responsibility now belongs to the SDP runtime, not to project code. (Earlier drafts of this SPEC described a hand-rolled `BaseDeltaIngestor` class hierarchy for this — superseded by this decision; see `docs/trade-offs.md`.)
+- **Why this split still respects Liskov/SRP:** a Handler and a pipeline dataset definition are different *kinds* of thing (an object with methods vs. a declared table + query) — there's no inheritance relationship to misuse here, which is itself a simplification over maintaining a custom `Ingestor` hierarchy.
+
+### 9.5.1 Python vs. SQL for pipeline definitions
+
+Both are provided per phase, side by side — a genuine either/or choice, not a DRY violation, since the goal is letting a human decide which one to keep for the portfolio, not running both simultaneously. Practical guidance for that choice: SQL variants read closer to a data-warehouse background and are shorter for straightforward declarations; Python variants are needed wherever metaprogramming, UDFs, or the DQ engine's programmatic rule-loading (Phase 3) are involved. Once you decide which to keep, delete the other — keeping both indefinitely would violate P0.
 
 ### 9.6 Engineering principles in this project
 
 Full definitions in `docs/ENGINEERING-PRINCIPLES.md` (project-agnostic document, reusable across other repositories — covers Principle 0, KISS/YAGNI/DRY, coupling/cohesion, SOLID, stdlib-first, documentation, error handling/logging, Python conventions, and testing). Concrete applications here:
 
 - **YAGNI:** feature store and ML models on top of gold are deliberately out of scope (Section 8) until a real consumer exists — we don't build speculative infrastructure.
-- **SOLID (Dependency Inversion):** the Section 4 interface contracts (`MessagingBackend`, `StorageBackend`, `ComputeBackend`) are a direct application of this principle — business logic depends on the interface, never on the concrete implementation (MinIO, GCS, Pub/Sub Emulator).
-- **SOLID (Liskov Substitution):** the technical foundation of convention 9.5 (Ingestors vs. Handlers) — inheritance only where the subclass is genuinely substitutable for the base.
+- **SOLID (Dependency Inversion):** the Section 4 interface contracts (`MessagingBackend`, `StorageBackend`) are a direct application of this principle — business logic depends on the interface, never on the concrete implementation (MinIO, GCS, Pub/Sub Emulator).
+- **YAGNI, again:** keeping both a Python and a SQL variant of every pipeline (convention 9.5.1) indefinitely would be waste — the intent is to pick one after comparing, not maintain two permanently.
 - **Robustness Principle:** the `_extra_fields` escape hatch (P8) is the direct application — liberal in what's accepted regarding new/unknown fields, conservative in what's declared/contracted.
-- **Stdlib-first:** an external dependency only when the task genuinely requires it (Spark for distributed processing; Pub/Sub/MinIO SDKs for the pluggable backends) — never for marginal convenience when the standard library would do.
-- **Error handling and logging:** P5 (structured logging via stdout) and the fail-fast pattern already used in Phases 2–4 are the concrete application of Section 6 of the engineering principles document.
+- **Stdlib-first:** an external dependency only when the task genuinely requires it (Spark/SDP for distributed processing; Pub/Sub/MinIO SDKs for the pluggable backends) — never for marginal convenience when the standard library would do.
+- **Error handling and logging:** P5 (structured logging via stdout) and the fail-fast pattern already used in Phases 2–4 (now expressed as SDP expectations rather than custom checks) are the concrete application of Section 6 of the engineering principles document.
 
 ### 9.7 Python environment and dependencies
 
