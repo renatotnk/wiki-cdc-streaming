@@ -64,13 +64,15 @@ gcloud services enable pubsub.googleapis.com
 
 #### Storage option A: S3 (required for Databricks Free Edition)
 
+> **Region:** create the bucket in **`us-east-2`**, matching this project's Databricks Free Edition workspace region — an External Volume registered against a bucket in a different region adds cross-region latency/transfer friction for no benefit here. Substitute your own workspace's region if it differs.
+
 ```bash
 # One-time AWS setup
 aws configure   # or export AWS_PROFILE=<your-profile>, if not already configured
 
-# Create the bucket (us-east-1 is the one region that omits --create-bucket-configuration)
-aws s3api create-bucket --bucket <your-bucket-name> --region <your-aws-region> \
-  --create-bucket-configuration LocationConstraint=<your-aws-region>
+# Create the bucket (us-east-1 is the one region that would omit --create-bucket-configuration)
+aws s3api create-bucket --bucket <your-bucket-name> --region us-east-2 \
+  --create-bucket-configuration LocationConstraint=us-east-2
 
 # Dedicated IAM user + access key, scoped to just this bucket (least privilege)
 aws iam create-user --user-name cdcstream-local-run
@@ -96,14 +98,14 @@ STORAGE_BACKEND=s3
 BUCKET_NAME=<your-bucket-name>
 AWS_ACCESS_KEY_ID=<the-access-key-id-from-above>
 AWS_SECRET_ACCESS_KEY=<the-secret-access-key-from-above>
-AWS_REGION=<your-aws-region>
+AWS_REGION=us-east-2
 # S3_ENDPOINT_URL removed entirely
 ```
 
 ```bash
 # Teardown — avoid any lingering cost/resource
 aws s3 rm s3://<your-bucket-name> --recursive
-aws s3api delete-bucket --bucket <your-bucket-name> --region <your-aws-region>
+aws s3api delete-bucket --bucket <your-bucket-name> --region us-east-2
 aws iam delete-access-key --user-name cdcstream-local-run --access-key-id <the-access-key-id>
 aws iam delete-user-policy --user-name cdcstream-local-run --policy-name cdcstream-s3-access
 aws iam delete-user --user-name cdcstream-local-run

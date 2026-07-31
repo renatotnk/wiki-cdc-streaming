@@ -16,7 +16,7 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 - **Language:** Python 3.12, managed with [uv](https://docs.astral.sh/uv/)
 - **Data source:** Wikipedia EventStreams (`recentchange`) via Server-Sent Events
 - **Messaging:** Google Cloud Pub/Sub (Pub/Sub Emulator locally, real Pub/Sub optionally)
-- **Storage:** MinIO locally (S3-compatible), Google Cloud Storage optionally
+- **Storage:** MinIO locally, real AWS S3 or Google Cloud Storage optionally (S3 required for Databricks Free Edition's S3-only External Volumes)
 - **Data manipulation:** [Polars](https://pola.rs/)
 - **Local infrastructure:** Docker Compose
 - _(Spark, Delta Lake, Databricks, and Streamlit land with their respective phases below)_
@@ -33,6 +33,7 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 
 - [`docs/SPEC-agnostic-architecture.md`](docs/SPEC-agnostic-architecture.md) — macro architecture, interface contracts, principles
 - [`docs/SPEC-phase1-ingestion.md`](docs/SPEC-phase1-ingestion.md) onward — per-phase specs
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — step-by-step execution, local and cloud, with cost warnings
 - [`docs/trade-offs.md`](docs/trade-offs.md) — decisions, alternatives, and what was sacrificed
 - [`docs/ENGINEERING-PRINCIPLES.md`](docs/ENGINEERING-PRINCIPLES.md) — project-agnostic engineering principles
 - [`docs/implementation-workflow.md`](docs/implementation-workflow.md) — repeatable per-phase implementation process
