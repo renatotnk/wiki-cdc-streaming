@@ -51,6 +51,8 @@ docker compose -f local-stack/docker-compose.yml down -v
 
 Switching backends is configuration-only (P2) — no change to `src/producer/`, `src/consumer/`, or `src/shared/`. What changes beyond `.env` is one-time cloud-side setup that the application deliberately does not do for you. Messaging and storage are independent choices — pick a storage option (S3 or GCS) regardless of whether Pub/Sub is emulated or real.
 
+> **Shortcut:** every command block below has a matching `scripts/cloud_{pubsub,s3,gcs}.sh up|down` that runs it for you — idempotent (safe to re-run), and the storage scripts write the resulting credentials straight into `.env` (auto-created from `.env.example` on first run) instead of you copy-pasting them. They assume `aws`/`gcloud` are already authenticated locally. The manual commands are kept below too, since that's what the scripts actually run — useful if you'd rather type them yourself or understand exactly what's happening before running something that touches real cloud billing.
+
 - **Pub/Sub:** topic/subscription creation *is* automatic in cloud mode too (`ensure_topic` calls the real Pub/Sub API the same way it calls the emulator) — you only need a GCP project with the Pub/Sub API enabled and a credential.
 - **S3 bucket:** creation is deliberately **not** automatic when `S3_ENDPOINT_URL` is unset (`src/handlers/storage/s3_compatible_storage_handler.py`) — per P3 (no cloud resource turned on by default), you create it explicitly, once, below. **Required if you plan to run Phase 2+ on Databricks Free Edition**, whose External Volumes only support S3-backed storage, not GCS.
 - **GCS bucket:** creation is deliberately **not** automatic (`src/handlers/storage/gcs_storage_handler.py`) — same P3 reasoning, same explicit-creation requirement.
@@ -61,6 +63,8 @@ gcloud auth application-default login
 gcloud config set project <your-gcp-project-id>
 gcloud services enable pubsub.googleapis.com
 ```
+
+Shortcut: `scripts/cloud_pubsub.sh up` (after setting `PUBSUB_PROJECT_ID` in `.env` to your real GCP project id — it refuses to run against the local-emulator placeholder).
 
 #### Storage option A: S3 (required for Databricks Free Edition)
 
@@ -89,6 +93,8 @@ aws iam create-access-key --user-name wiki-cdc-streaming-run
 # copy AccessKeyId/SecretAccessKey from the output into .env below
 ```
 
+Shortcut: `scripts/cloud_s3.sh up` runs everything above **and** writes the resulting `AccessKeyId`/`SecretAccessKey` into `.env` for you (plus `STORAGE_BACKEND=s3`, `BUCKET_NAME`, `AWS_REGION`, and disabling `S3_ENDPOINT_URL`) — skip straight to the local run section afterward.
+
 Update `.env` (keep the rest of the file untouched — critically, `S3_ENDPOINT_URL` must be **unset/removed**, not just left at its local value, or `S3CompatibleStorageHandler` will still point at MinIO):
 
 ```bash
@@ -111,6 +117,8 @@ aws iam delete-user-policy --user-name wiki-cdc-streaming-run --policy-name wiki
 aws iam delete-user --user-name wiki-cdc-streaming-run
 ```
 
+Shortcut: `scripts/cloud_s3.sh down` (also reverts `.env` to `STORAGE_BACKEND=minio`).
+
 #### Storage option B: GCS
 
 ```bash
@@ -132,6 +140,8 @@ gcloud iam service-accounts keys create ./gcp-credentials.json \
   --iam-account=wiki-cdc-streaming-run@<your-gcp-project-id>.iam.gserviceaccount.com
 ```
 
+Shortcut: `scripts/cloud_gcs.sh up` runs everything above and writes `STORAGE_BACKEND=gcs`, `BUCKET_NAME`, and `GOOGLE_APPLICATION_CREDENTIALS` into `.env` for you — skip straight to the local run section afterward.
+
 Update `.env` (keep the rest of the file untouched):
 
 ```bash
@@ -149,12 +159,16 @@ gcloud iam service-accounts delete wiki-cdc-streaming-run@<your-gcp-project-id>.
 rm ./gcp-credentials.json
 ```
 
+Shortcut: `scripts/cloud_gcs.sh down` (also reverts `.env` to `STORAGE_BACKEND=minio`).
+
 #### Pub/Sub teardown (either storage option)
 
 ```bash
 gcloud pubsub subscriptions delete recentchange-raw-sub
 gcloud pubsub topics delete recentchange-raw
 ```
+
+Shortcut: `scripts/cloud_pubsub.sh down`.
 
 Run producer/consumer exactly as in the local run section above — same commands, no code change, regardless of which storage option you picked.
 
