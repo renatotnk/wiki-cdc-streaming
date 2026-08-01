@@ -39,3 +39,4 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 - [`docs/trade-offs.md`](docs/trade-offs.md) — decisions, alternatives, and what was sacrificed
 - [`docs/ENGINEERING-PRINCIPLES.md`](docs/ENGINEERING-PRINCIPLES.md) — project-agnostic engineering principles
 - [`docs/implementation-workflow.md`](docs/implementation-workflow.md) — repeatable per-phase implementation process
+- [`CHANGELOG.md`](CHANGELOG.md) — notable changes per release, [Keep a Changelog](https://keepachangelog.com/) + [SemVer](https://semver.org/)

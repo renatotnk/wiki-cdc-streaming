@@ -1,6 +1,6 @@
 [project]
 name = "wiki-cdc-streaming"
-version = "0.1.0"
+version = "0.2.0"
 description = "CDC-style streaming pipeline: Wikipedia EventStreams to a medallion Lakehouse"
 authors = [
     { name = "renatotnk", email = "renato-tnk@live.com" }
