@@ -18,11 +18,7 @@ from urllib.parse import urlparse
 
 from minio import Minio
 
-from src.handlers.storage.base import (
-    dataframe_to_parquet_bytes,
-    parquet_bytes_to_dataframe,
-    require_supported_format,
-)
+from src.handlers.storage.base import bytes_to_dataframe, dataframe_to_bytes
 
 AWS_S3_ENDPOINT = "s3.amazonaws.com"
 
@@ -54,15 +50,13 @@ class S3CompatibleStorageHandler:
             )
 
     def write(self, df: Any, path: str, format: str = "delta") -> None:
-        require_supported_format(format)
-        payload = dataframe_to_parquet_bytes(df)
+        payload = dataframe_to_bytes(df, format)
         self._client.put_object(self._bucket, path, io.BytesIO(payload), length=len(payload))
 
     def read(self, path: str, format: str = "delta") -> Any:
-        require_supported_format(format)
         response = self._client.get_object(self._bucket, path)
         try:
-            return parquet_bytes_to_dataframe(response.read())
+            return bytes_to_dataframe(response.read(), format)
         finally:
             response.close()
             response.release_conn()

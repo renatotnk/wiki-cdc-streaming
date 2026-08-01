@@ -10,11 +10,7 @@ from typing import Any
 
 from google.cloud import storage
 
-from src.handlers.storage.base import (
-    dataframe_to_parquet_bytes,
-    parquet_bytes_to_dataframe,
-    require_supported_format,
-)
+from src.handlers.storage.base import bytes_to_dataframe, dataframe_to_bytes
 
 
 class GcsStorageHandler:
@@ -23,15 +19,13 @@ class GcsStorageHandler:
         self._client = storage.Client()
 
     def write(self, df: Any, path: str, format: str = "delta") -> None:
-        require_supported_format(format)
-        payload = dataframe_to_parquet_bytes(df)
+        payload = dataframe_to_bytes(df, format)
         blob = self._client.bucket(self._bucket_name).blob(path)
         blob.upload_from_string(payload)
 
     def read(self, path: str, format: str = "delta") -> Any:
-        require_supported_format(format)
         blob = self._client.bucket(self._bucket_name).blob(path)
-        return parquet_bytes_to_dataframe(blob.download_as_bytes())
+        return bytes_to_dataframe(blob.download_as_bytes(), format)
 
     def resolve_uri(self, logical_path: str) -> str:
         return f"gs://{self._bucket_name}/{logical_path}"

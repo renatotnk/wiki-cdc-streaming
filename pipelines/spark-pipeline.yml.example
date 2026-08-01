@@ -1,0 +1,27 @@
+# Template for pipelines/spark-pipeline.yml -- rendered automatically by
+# scripts/render_local_spark_config.py (never edit the generated file's
+# placeholders by hand; edit this template instead). Mirrors the
+# .env.example -> .env convention (docs/SPEC-agnostic-architecture.md 9.8):
+# the rendered file is machine-specific and gitignored, this template is not.
+#
+# storage: SDP's own checkpoint/metadata root -- must be an absolute path
+# with a URI scheme, which rules out a plain OS-env `${VAR}`-style
+# placeholder here (spark-pipeline.yml is parsed as plain YAML, with no env
+# substitution -- see docs/SPEC-phase2-bronze.md Section 4.3).
+name: wikipedia_cdc_pipeline
+storage: file://__PIPELINE_STORAGE_ROOT__
+libraries:
+  # Relative to this spec file's own directory (pipelines/), not the repo
+  # root or cwd -- spark-pipelines resolves `include` against
+  # spec_path.parent, so this is "bronze/**", not "pipelines/bronze/**".
+  - glob:
+      include: bronze/**
+configuration:
+  # Only read by dim_wiki_reference.sql's `json.`${spark.wikicdc.raw_dim_wiki_reference_path}`
+  # (docs/SPEC-phase2-bronze.md Section 7.3) -- the Python variants of both
+  # bronze datasets resolve their own path via get_storage_backend()
+  # directly and don't need this. Prefixed with "spark." deliberately:
+  # unprefixed custom keys are silently dropped by Spark's config loader
+  # with an easy-to-miss "Ignoring non-Spark config property" warning --
+  # verified empirically (Section 4.3).
+  spark.wikicdc.raw_dim_wiki_reference_path: __RAW_DIM_WIKI_REFERENCE_PATH__

@@ -1,0 +1,35 @@
+# Data contract for bronze_dim_wiki_reference, sourced from the Wikimedia
+# sitematrix API (P8, SPEC-agnostic-architecture.md Section 4.4). Source of
+# truth for pipelines/bronze/schema.py's DIM_WIKI_REFERENCE_SCHEMA and
+# dim_wiki_reference.sql's explicit CASTs.
+contract_version: "1.0.0"
+description: >
+  Wiki metadata (language, project type) independent of the recentchange
+  event stream -- see SPEC-phase2-bronze.md Section 3. Populated by
+  scripts/fetch_wiki_sitematrix.py, one snapshot file per fetch. Only the
+  per-language entries from the sitematrix response are included; the
+  API's "specials" section (Wikidata, Commons, but also purely
+  organizational wikis) doesn't fit this contract's language-based shape
+  and is deliberately left out.
+
+fields:
+  - name: wiki_code
+    type: string
+    nullable: false
+    description: Natural key, matches `wiki` in recentchange events (e.g. enwiki, ptwiki).
+  - name: language_name
+    type: string
+    nullable: true
+    description: Full English language name (e.g. "Portuguese").
+  - name: project_type
+    type: string
+    nullable: true
+    description: wikipedia, wiktionary, wikibooks, wikinews, wikiquote, wikisource, wikiversity, wikivoyage.
+  - name: is_closed
+    type: boolean
+    nullable: true
+    description: Whether the wiki is closed/read-only.
+  - name: _snapshot_fetched_at
+    type: timestamp
+    nullable: true
+    description: When scripts/fetch_wiki_sitematrix.py pulled this snapshot (ISO8601 in the source file).

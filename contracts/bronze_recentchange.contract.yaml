@@ -1,0 +1,112 @@
+# Data contract: raw -> bronze boundary for bronze_recentchange (P8,
+# SPEC-agnostic-architecture.md Section 4.4). Source of truth for the
+# Spark StructType in pipelines/bronze/schema.py -- that module encodes
+# these types, it doesn't redefine them.
+contract_version: "1.0.0"
+description: >
+  Faithful, typed mirror of the raw recentchange events Phase 1 already
+  produces (SPEC-phase1-ingestion.md Section 6). Bronze applies no business
+  rule and no row-level validation here -- see SPEC-phase2-bronze.md
+  Section 4 and 4.1. Any field not listed below is preserved, untyped,
+  inside `_extra_fields` (Robustness Principle, never dropped).
+
+fields:
+  - name: id
+    type: long
+    nullable: true
+    description: Original Wikipedia event id (sequential).
+  - name: type
+    type: string
+    nullable: true
+    enum: [edit, new, log, categorize]
+  - name: title
+    type: string
+    nullable: true
+  - name: user
+    type: string
+    nullable: true
+  - name: bot
+    type: boolean
+    nullable: true
+  - name: wiki
+    type: string
+    nullable: true
+    description: Wiki domain code (e.g. enwiki, ptwiki) -- natural key joined against dim_wiki_reference in gold.
+  - name: timestamp
+    type: long
+    nullable: true
+    description: Event time, epoch seconds.
+  - name: server_url
+    type: string
+    nullable: true
+  - name: meta
+    type: struct
+    nullable: true
+    description: MediaWiki EventStreams envelope metadata.
+    fields:
+      - name: uri
+        type: string
+        nullable: true
+      - name: request_id
+        type: string
+        nullable: true
+      - name: id
+        type: string
+        nullable: true
+        description: Meta envelope UUID (distinct from the top-level integer id).
+      - name: dt
+        type: string
+        nullable: true
+        description: Event publication moment, ISO8601 -- drives Phase 1 partitioning and Phase 3 watermarking.
+      - name: domain
+        type: string
+        nullable: true
+      - name: stream
+        type: string
+        nullable: true
+      - name: topic
+        type: string
+        nullable: true
+      - name: partition
+        type: long
+        nullable: true
+      - name: offset
+        type: long
+        nullable: true
+  - name: length
+    type: struct
+    nullable: true
+    fields:
+      - name: old
+        type: long
+        nullable: true
+      - name: new
+        type: long
+        nullable: true
+  - name: _event_id
+    type: string
+    nullable: true
+    description: str(id) -- deduplication key (SPEC-phase1-ingestion.md Section 7).
+  - name: _ingested_at
+    type: string
+    nullable: true
+    description: >
+      ISO8601 string -- moment the producer received the event (processing
+      time, distinct from meta.dt event time). Typed as string, not
+      timestamp: src/producer/main.py writes datetime.isoformat(), which is
+      what's actually on disk, regardless of SPEC-phase1-ingestion.md
+      Section 6's prose table saying "timestamp".
+  - name: _producer_instance
+    type: string
+    nullable: true
+  - name: _extra_fields
+    type: string
+    nullable: true
+    description: JSON-encoded fields present in the raw payload but not part of the known schema (P8 escape hatch).
+  - name: _schema_version
+    type: string
+    nullable: true
+    description: Version of KNOWN_TOP_LEVEL_FIELDS (src/shared/event_schema.py) at parse time.
+
+# Path-derived, not present in the JSON payload itself (SPEC-phase1-ingestion.md Section 5).
+partition_columns: [dt, hour]
