@@ -18,13 +18,15 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 - **Messaging:** Google Cloud Pub/Sub (Pub/Sub Emulator locally, real Pub/Sub optionally)
 - **Storage:** MinIO locally, real AWS S3 or Google Cloud Storage optionally (S3 required for Databricks Free Edition's S3-only External Volumes)
 - **Data manipulation:** [Polars](https://pola.rs/)
+- **Compute:** [Spark Declarative Pipelines](https://spark.apache.org/) (`pyspark[pipelines]`, Spark 4.1+) + [Delta Lake](https://delta.io/), local via the `spark-pipelines` CLI, optionally as a Databricks Lakeflow Declarative Pipeline
+- **Local inspection:** [DuckDB](https://duckdb.org/) (`delta_scan()`, no SparkSession needed)
 - **Local infrastructure:** Docker Compose
-- _(Spark, Delta Lake, Databricks, and Streamlit land with their respective phases below)_
+- _(Databricks and Streamlit land with their respective phases below)_
 
 ## Phase status
 
 - [x] Phase 1 — Ingestion (producer → messaging → raw bucket)
-- [ ] Phase 2 — Bronze (consolidation via Spark)
+- [x] Phase 2 — Bronze (consolidation via Spark)
 - [ ] Phase 2.5 — CI/CD
 - [ ] Phase 3 — Silver (Data Quality + Change Data Feed)
 - [ ] Phase 4 — Gold (Dimensional Modeling + Streamlit Dashboard)
