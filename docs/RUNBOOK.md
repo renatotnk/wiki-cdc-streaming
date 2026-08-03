@@ -238,19 +238,27 @@ Things worth knowing before you run these:
 
 ### Cloud (optional)
 
-> **Cost warning:** this uses Databricks Free Edition serverless compute, which stays within its fair-use quota at this project's scale, but is still a real cloud resource tied to your Databricks account. Databricks Free Edition's External Volumes only support S3-backed storage (not GCS, not MinIO) — see Phase 1's Cloud section (`STORAGE_BACKEND=s3`) if you haven't set that up yet.
+> **Cost warning:** this uses Databricks Free Edition serverless compute, which stays within its fair-use quota at this project's scale, but is still a real cloud resource tied to your Databricks account. Databricks Free Edition's External Locations only support S3-backed storage (not GCS, not MinIO) — see Phase 1's Cloud section (`STORAGE_BACKEND=s3`) if you haven't set that up yet.
 >
-> **Not verified against a real Databricks workspace in this session** — the steps below are directionally correct (same pipeline definitions, same `StorageBackend`-driven config, no code fork) but come with the same caveat as any first cloud run: expect to troubleshoot the exact UI flow yourself.
+> **Steps 1–2 and 5 are exact UI flows I haven't verified against a live Databricks workspace** — expect to troubleshoot the precise menu labels yourself; report back what you actually see and this section gets corrected. **Step 3 (no AWS credentials needed) is verified directly from the code**, not a guess — see below.
 
 Switching compute to Databricks doesn't touch `pipelines/bronze/*.py`/`*.sql` — same source files, same `STORAGE_BACKEND`-driven config (P2/P6). What's genuinely different is one-time cloud-side setup:
 
-1. Set `STORAGE_BACKEND=s3` in `.env` (Phase 1's Cloud section covers the one-time AWS bucket/IAM setup) — Databricks Free Edition can't reach a local MinIO instance.
-2. Create a Databricks Free Edition workspace, then register an External Volume against that S3 bucket (Catalog Explorer → External Data → add a storage credential + external location).
-3. Sync this repo into a Databricks Repo (Databricks CLI: `databricks sync . /Workspace/Repos/<you>/wiki-cdc-streaming`, or the Git integration in the UI) — the pipeline files import `pipelines.bronze.schema` and `src.shared.backend_factory`, so both need to be present, not just `pipelines/bronze/`.
-4. Create a Lakeflow Declarative Pipeline (Jobs & Pipelines → Create → ETL Pipeline) pointing its source code at the synced `pipelines/bronze/` folder.
-5. Run the pipeline from the Databricks UI. This is also the one environment where the SDP features this phase deliberately avoided locally — expectations, `read_files`, `create_auto_cdc_flow` (`docs/SPEC-phase2-bronze.md` Section 4.1/4.2/5) — are genuinely available, should a future phase revisit using them.
+1. **Seed real S3 first.** Set `STORAGE_BACKEND=s3` in `.env` (Phase 1's Cloud section covers the one-time AWS bucket/IAM setup), run producer/consumer against it for a bit to get raw data in, then `uv run python -m scripts.fetch_wiki_sitematrix` to seed `dim_wiki_reference/`. Databricks Free Edition can't reach a local MinIO instance.
+2. **IAM role + Unity Catalog Storage Credential + External Location**, registered against your S3 bucket (Catalog → External Data → Credentials, then External Locations) — the standard Unity-Catalog-to-S3 setup, granting Databricks compute access to that bucket path.
+3. **Git folder**, not a manual sync: Workspace → Create → Git folder → this repo's URL → check out the relevant branch. Then, in that Git folder, create a `.env` file (Workspace UI → right-click → Create → File) at the repo root containing only:
 
-Teardown: delete the Lakeflow pipeline and the External Volume/storage credential from the Databricks UI when done; `scripts/cloud_s3.sh down` (Phase 1) tears down the underlying S3 bucket/IAM user.
+   ```bash
+   STORAGE_BACKEND=s3
+   BUCKET_NAME=<your-real-bucket-name>
+   ```
+
+   No AWS keys needed, and this isn't a shortcut/placeholder — it's the actual requirement. `S3CompatibleStorageHandler`/`GcsStorageHandler` build their real client (and read `AWS_ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`/`REGION`) lazily, only on `write()`/`read()` — `pipelines/bronze/*.py` call only `resolve_uri()`, which needs just the bucket name. The actual S3 read happens through Spark's own Hadoop S3A connector, using whatever credential Unity Catalog vends via the External Location from step 2 — a completely separate mechanism from these Python-level env vars, and one that never needs an explicit AWS secret sitting in the workspace. Verified directly: `resolve_uri()` returns the correct URI with zero AWS env vars set at all (`tests/test_s3_compatible_storage_handler.py::test_resolve_uri_needs_no_aws_credentials`).
+4. Create a Lakeflow Declarative Pipeline (Jobs & Pipelines → Create → ETL Pipeline) with source code pointing at the Git folder's `pipelines/bronze/` path, destination a Unity Catalog catalog/schema of your choice, compute Serverless. In its Configuration section add `spark.wikicdc.raw_dim_wiki_reference_path` = `s3a://<your-bucket>/dim_wiki_reference` (only `dim_wiki_reference.sql` needs this — the `.py` variants resolve their own path).
+5. Run the pipeline from the Databricks UI — should show `bronze_recentchange`, `bronze_dim_wiki_reference_py`, `bronze_dim_wiki_reference_sql` as three graph nodes. This is also the one environment where the SDP features this phase deliberately avoided locally — expectations, `read_files`, `create_auto_cdc_flow` (`docs/SPEC-phase2-bronze.md` Section 4.1/4.2/5) — are genuinely available, should a future phase revisit using them.
+6. Optional: wrap the pipeline in a schedule via Workflows → Jobs → Create Job → add a task of type Pipeline → select the pipeline from step 4 → set a schedule.
+
+Teardown: delete the Lakeflow pipeline, Job (if created), Git folder, and the External Location/Storage Credential from the Databricks UI when done; `scripts/cloud_s3.sh down` (Phase 1) tears down the underlying S3 bucket/IAM user.
 
 ---
 
