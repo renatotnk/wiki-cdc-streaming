@@ -14,8 +14,11 @@ itself is generated from `.env.example` (convention 9.8). Produces:
   spark-pipeline.yml's own `configuration:` block can't set after the fact
   (Section 4.3).
 
-Run once, and again after any relevant `.env` change:
-    python scripts/render_local_spark_config.py
+Run once, and again after any relevant `.env` change, from the repo root
+(run as a module, not a direct file path -- otherwise `from src...`
+resolves against scripts/'s own directory instead of the repo root, same
+reasoning as Phase 1's `python -m src.producer.main`):
+    python -m scripts.render_local_spark_config
 Then, before any spark-pipelines command:
     export SPARK_CONF_DIR="$(pwd)/local-stack/.spark-conf"
 

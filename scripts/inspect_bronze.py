@@ -9,7 +9,9 @@ old files stay on disk as Delta tombstones until vacuumed; only
 delta_scan() (or any Delta-transaction-log-aware reader) reports the
 table's true current content.
 
-Usage: python scripts/inspect_bronze.py
+Usage (from the repo root, for consistency with the other scripts, though
+this one has no local-package import to break either way):
+    python -m scripts.inspect_bronze
 """
 
 from pathlib import Path
@@ -38,7 +40,7 @@ def main() -> None:
     if not table_dirs:
         print(
             f"No Delta tables found under {WAREHOUSE_DIR}. Run "
-            "`python scripts/render_local_spark_config.py` and `spark-pipelines run` first."
+            "`python -m scripts.render_local_spark_config` and `spark-pipelines run` first."
         )
         return
 

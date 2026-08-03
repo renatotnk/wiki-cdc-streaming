@@ -12,11 +12,17 @@ picked a variant, rename its table back to bronze_dim_wiki_reference and
 delete the other file.
 """
 
+from dotenv import load_dotenv
 from pyspark import pipelines as dp
 from pyspark.sql import SparkSession
 
 from pipelines.bronze.schema import DIM_WIKI_REFERENCE_SCHEMA
 from src.shared.backend_factory import get_storage_backend
+
+# Unconditional, not inside `if __name__ == "__main__":` -- unlike
+# producer/consumer (always run directly), spark-pipelines *imports* this
+# file as a regular module, so a __main__-gated load_dotenv() never fires.
+load_dotenv()
 
 spark = SparkSession.active()
 raw_dim_wiki_reference_path = get_storage_backend().resolve_uri("dim_wiki_reference")

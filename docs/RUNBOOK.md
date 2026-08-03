@@ -195,7 +195,7 @@ docker compose -f local-stack/docker-compose.yml up -d
 #    neither of which spark-pipeline.yml's own configuration: block can set
 #    (see docs/SPEC-phase2-bronze.md Section 4.3 for why). Re-run this any
 #    time .env changes (STORAGE_BACKEND, credentials, bucket name).
-uv run python scripts/render_local_spark_config.py
+uv run python -m scripts.render_local_spark_config
 
 # 5. Point Spark at that generated config for every command below (every
 #    new shell)
@@ -207,6 +207,13 @@ Neither `pipelines/spark-pipeline.yml` nor `local-stack/.spark-conf/` is committ
 ### Local run
 
 ```bash
+# Required before the very first dry-run/run: bronze_dim_wiki_reference is
+# a *batch* read (unlike bronze_recentchange's streaming read, which
+# tolerates starting with zero files) -- it fails with [PATH_NOT_FOUND] if
+# dim_wiki_reference/ doesn't have at least one snapshot file yet. A real
+# call to the public Wikimedia sitematrix API -- no credential needed.
+uv run python -m scripts.fetch_wiki_sitematrix
+
 # Validate the pipeline definition without touching data
 uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
 
@@ -214,16 +221,16 @@ uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
 uv run spark-pipelines run --spec pipelines/spark-pipeline.yml
 
 # Pull a fresh wiki-metadata snapshot whenever you want
-# bronze_dim_wiki_reference to reflect current data (a real call to the
-# public Wikimedia sitematrix API — no credential needed)
-uv run python scripts/fetch_wiki_sitematrix.py
+# bronze_dim_wiki_reference to reflect current data
+uv run python -m scripts.fetch_wiki_sitematrix
 
 # Inspect the results locally (DuckDB's delta_scan(), no SparkSession needed)
-uv run python scripts/inspect_bronze.py
+uv run python -m scripts.inspect_bronze
 ```
 
 Things worth knowing before you run these:
 
+- **Fetch a wiki-reference snapshot before the first dry-run/run, not after** — see the comment above. This trips up a first-time run since `bronze_recentchange` alone doesn't need it.
 - **Always run `spark-pipelines` commands from the repo root.** The embedded Derby metastore's own location (`metastore_db/`, `derby.log`) can't be redirected via `spark-defaults.conf` — it always lands relative to wherever the command is invoked from (both are gitignored at the repo root). `spark.sql.warehouse.dir` (the actual table data) *is* redirected correctly, to `local-stack/.spark-conf/warehouse/`.
 - **Two variants of `bronze_dim_wiki_reference` run every time**, side by side, for comparison (`bronze_dim_wiki_reference_py` / `bronze_dim_wiki_reference_sql` — convention 9.5.1). Once you've picked one, rename its table back to `bronze_dim_wiki_reference` and delete the other file (`pipelines/bronze/dim_wiki_reference.py` or `.sql`).
 - **First run downloads jars** (Hadoop-AWS, Delta, or the GCS connector, depending on `STORAGE_BACKEND`) via Maven — a one-time cost per machine, cached afterward in `~/.ivy2.5.2/`.

@@ -6,12 +6,18 @@ docs/SPEC-phase2-bronze.md Section 4.2). Applies typing only, no row-level
 validation (Section 4.1 of the same doc) -- Phase 3 owns that.
 """
 
+from dotenv import load_dotenv
 from pyspark import pipelines as dp
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import current_timestamp
 
 from pipelines.bronze.schema import BRONZE_RECENTCHANGE_SCHEMA
 from src.shared.backend_factory import get_storage_backend
+
+# Unconditional, not inside `if __name__ == "__main__":` -- unlike
+# producer/consumer (always run directly), spark-pipelines *imports* this
+# file as a regular module, so a __main__-gated load_dotenv() never fires.
+load_dotenv()
 
 spark = SparkSession.active()
 raw_recentchange_path = get_storage_backend().resolve_uri("raw")

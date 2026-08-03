@@ -10,6 +10,11 @@ wikis under a language, e.g. "aawiki"/"aawiktionary" under Afar) -- the
 API's "specials" section (Wikidata, Commons, but also dozens of purely
 organizational wikis like "board"/"steward"/"office") doesn't fit the
 contract's "language_name" shape and is deliberately left out (P0/YAGNI).
+
+Run as a module, from the repo root (not a direct file path -- otherwise
+`from src...` resolves against scripts/'s own directory instead of the
+repo root):
+    python -m scripts.fetch_wiki_sitematrix
 """
 
 import os

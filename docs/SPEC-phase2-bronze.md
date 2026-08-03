@@ -98,12 +98,18 @@ New contract for `bronze_dim_wiki_reference`: `contracts/dim_wiki_reference.cont
 ### 7.1 Python (`pipelines/bronze/bronze_recentchange.py`) — the only variant for this dataset (Section 4.2)
 
 ```python
+from dotenv import load_dotenv
 from pyspark import pipelines as dp
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import current_timestamp
 
 from pipelines.bronze.schema import BRONZE_RECENTCHANGE_SCHEMA
 from src.shared.backend_factory import get_storage_backend
+
+# Unconditional, not gated behind `if __name__ == "__main__":` like
+# producer/consumer -- spark-pipelines *imports* this file as a regular
+# module, so a __main__-gated load_dotenv() would never run.
+load_dotenv()
 
 spark = SparkSession.active()
 raw_recentchange_path = get_storage_backend().resolve_uri("raw")
@@ -136,11 +142,14 @@ Unlike `bronze_recentchange` (Python-only, no conflict), both `dim_wiki_referenc
 ### 7.3 Python (`pipelines/bronze/dim_wiki_reference.py`)
 
 ```python
+from dotenv import load_dotenv
 from pyspark import pipelines as dp
 from pyspark.sql import SparkSession
 
 from pipelines.bronze.schema import DIM_WIKI_REFERENCE_SCHEMA
 from src.shared.backend_factory import get_storage_backend
+
+load_dotenv()  # unconditional -- see bronze_recentchange.py's comment (Section 7.1)
 
 spark = SparkSession.active()
 raw_dim_wiki_reference_path = get_storage_backend().resolve_uri("raw/dim_wiki_reference")
@@ -250,10 +259,16 @@ The original draft's acceptance criterion 5 ("fail-fast on structural corruption
 
 ```bash
 # One-time (and after any .env change): generate the local Spark/Hadoop connector config (Section 4.3)
-python scripts/render_local_spark_config.py
+python -m scripts.render_local_spark_config
 
 # Point Spark at that generated config for every command below
 export SPARK_CONF_DIR="$(pwd)/local-stack/.spark-conf"
+
+# Required before the very first dry-run/run: bronze_dim_wiki_reference is a
+# *batch* read and fails with [PATH_NOT_FOUND] if dim_wiki_reference/ doesn't
+# have at least one snapshot file yet (unlike bronze_recentchange's streaming
+# read, which tolerates zero files). Run again whenever you want to refresh it.
+python -m scripts.fetch_wiki_sitematrix
 
 # Validate the pipeline definition without touching data
 spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
@@ -261,11 +276,8 @@ spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
 # Run it (local Spark 4.1+)
 spark-pipelines run --spec pipelines/spark-pipeline.yml
 
-# Fetch a new wiki-metadata snapshot (run whenever you want to refresh it)
-python scripts/fetch_wiki_sitematrix.py
-
 # Inspect data locally
-python scripts/inspect_bronze.py
+python -m scripts.inspect_bronze
 ```
 
 ## 14. Local data inspection
