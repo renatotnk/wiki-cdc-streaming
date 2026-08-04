@@ -92,9 +92,9 @@ pandas==3.0.5
     # via pyspark
 pluggy==1.6.0
     # via pytest
-polars==1.43.1
+polars==1.43.2
     # via wiki-cdc-streaming
-polars-runtime-32==1.43.1
+polars-runtime-32==1.43.2
     # via polars
 proto-plus==1.28.2
     # via
