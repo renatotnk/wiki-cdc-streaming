@@ -1,0 +1,194 @@
+name: CI
+
+# SPEC-phase2__5-cicd.md Section 4: `test` runs on every push/PR to main,
+# with zero cloud secrets. `deploy` only runs via a manual workflow_dispatch
+# with confirm_deploy=true (Section 5) -- never on a regular push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: "Type 'true' to deploy the current branch's code to the Databricks Job"
+        required: true
+        default: "false"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # No `secrets.*` reference anywhere in this job -- auditable at a glance
+    # (SPEC Section 7/8 acceptance criterion 1). Every value below is a
+    # fixed, local-only default, identical to .env.example.
+    env:
+      MESSAGING_BACKEND: emulator
+      PUBSUB_PROJECT_ID: wiki-cdc-streaming-ci
+      PUBSUB_EMULATOR_HOST: localhost:8085
+      STORAGE_BACKEND: minio
+      BUCKET_NAME: wiki-cdc-streaming-raw
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      S3_ENDPOINT_URL: http://localhost:9000
+      AWS_REGION: us-east-2
+      WIKI_STREAM_CONTACT: ci@wiki-cdc-streaming.invalid
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Spark Declarative Pipelines needs a real JVM -- Spark 4.1+/SDP
+      # requires JDK 17+, stricter than plain PySpark (docs/SPEC-phase2-bronze.md
+      # Section 4.3, docs/implementation-workflow.md one-time setup).
+      - name: Set up Java (Spark Declarative Pipelines requirement)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # First spark-pipelines invocation downloads the Hadoop-AWS/Delta
+      # connector jars via Maven/Ivy (docs/RUNBOOK.md Phase 2 "Local run") --
+      # cached across runs so CI doesn't re-download them every time.
+      - name: Cache Ivy/Maven connector jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.ivy2.5.2
+          key: ivy2-${{ runner.os }}-${{ hashFiles('scripts/render_local_spark_config.py') }}
+
+      - name: Start local stack (Pub/Sub Emulator + MinIO)
+        run: docker compose -f local-stack/docker-compose.yml up -d --wait
+
+      - name: Wait for the Pub/Sub Emulator to accept connections
+        # pubsub-emulator has no Docker healthcheck (local-stack/docker-compose.yml),
+        # unlike minio -- `--wait` above only confirms the container is
+        # running, not that its socket is open yet. Fails loud instead of
+        # letting every integration test silently skip as "stack unreachable".
+        run: |
+          for _ in $(seq 1 30); do
+            (exec 3<>/dev/tcp/127.0.0.1/8085) 2>/dev/null && exit 0
+            sleep 1
+          done
+          echo "Pub/Sub Emulator did not become reachable within 30s" >&2
+          exit 1
+
+      - name: Render local Spark configuration
+        run: |
+          uv run python -m scripts.render_local_spark_config
+          echo "SPARK_CONF_DIR=$GITHUB_WORKSPACE/local-stack/.spark-conf" >> "$GITHUB_ENV"
+
+      # A brand-new MinIO bucket (as CI always starts with) has neither
+      # prefix populated yet, and both fail `spark-pipelines dry-run`/`run`
+      # with [PATH_NOT_FOUND] on a genuinely empty prefix -- verified
+      # empirically while wiring up this workflow, a stricter constraint
+      # than docs/SPEC-phase2-bronze.md Section 4.3 recorded (that section
+      # only called out bronze_dim_wiki_reference's batch read; in a bucket
+      # that has *never* had a producer/consumer run against it,
+      # bronze_recentchange's streaming read hits the same error, since S3
+      # has no real notion of an empty-but-existing directory). Seeding one
+      # throwaway object under each prefix keeps this workflow's promise of
+      # zero external network calls -- scripts/fetch_wiki_sitematrix.py's
+      # real Wikimedia sitematrix API call stays a local-dev/manual
+      # operating command, never run in CI.
+      - name: Seed raw/ and dim_wiki_reference/ so a fresh bucket has both prefixes
+        run: |
+          uv run python - <<'PY'
+          import polars as pl
+
+          from src.handlers.storage.s3_compatible_storage_handler import S3CompatibleStorageHandler
+
+          handler = S3CompatibleStorageHandler()
+
+          meta = {
+              "dt": "2026-01-01T00:00:00Z", "uri": "https://en.wikipedia.org/w/index.php",
+              "request_id": "req-ci-seed", "id": "uuid-ci-seed", "domain": "en.wikipedia.org",
+              "stream": "recentchange", "topic": "eqiad.mediawiki.recentchange",
+              "partition": 0, "offset": 1,
+          }
+          raw_seed = pl.DataFrame(
+              {
+                  "id": [0],
+                  "type": ["edit"],
+                  "title": ["CI seed page"],
+                  "user": ["ci-seed-user"],
+                  "bot": [False],
+                  "wiki": ["enwiki"],
+                  "timestamp": [1_700_000_000],
+                  "server_url": ["https://en.wikipedia.org"],
+                  "meta": [meta],
+                  "length": [{"old": 1, "new": 2}],
+                  "_event_id": ["ci-seed-0"],
+                  "_ingested_at": ["2026-01-01T00:00:01Z"],
+                  "_producer_instance": ["ci-seed"],
+                  "_extra_fields": ["{}"],
+                  "_schema_version": ["1.0.0"],
+              }
+          )
+          handler.write(raw_seed, "raw/dt=2026-01-01/hour=00/part-ci-seed.parquet", format="parquet")
+
+          dim_wiki_seed = pl.DataFrame(
+              {
+                  "wiki_code": ["enwiki", "dewiki"],
+                  "language_name": ["English", "German"],
+                  "project_type": ["wikipedia", "wikipedia"],
+                  "is_closed": [False, False],
+                  "_snapshot_fetched_at": ["2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
+              }
+          )
+          handler.write(dim_wiki_seed, "dim_wiki_reference/snapshot-ci-seed.json", format="ndjson")
+
+          print("seeded raw/ and dim_wiki_reference/ for a fresh CI bucket")
+          PY
+
+      # Validates the pipeline definition (schema/dependency wiring) before
+      # spending time on a real execution inside pytest -- cheap fail-fast
+      # (SPEC-phase2__5-cicd.md Section 4).
+      - name: Validate the pipeline definition (spark-pipelines dry-run)
+        run: uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+      - name: Tear down local stack
+        if: always()
+        run: docker compose -f local-stack/docker-compose.yml down -v
+
+  deploy:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # Only step in this workflow referencing DATABRICKS_HOST/DATABRICKS_TOKEN
+      # -- the `test` job above never sees these secrets (SPEC Section 7).
+      - name: Deploy to Databricks Jobs
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_JOB_ID: ${{ vars.DATABRICKS_JOB_ID }}
+          DATABRICKS_NOTEBOOK_PATH: ${{ vars.DATABRICKS_NOTEBOOK_PATH }}
+        run: uv run python -m scripts.deploy_databricks_job --confirm

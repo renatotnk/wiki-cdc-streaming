@@ -73,7 +73,14 @@ def _read_all_partitions(storage_backend) -> pl.DataFrame:
         secure=endpoint.scheme == "https",
     )
     objects = client.list_objects(os.environ["BUCKET_NAME"], prefix="raw/", recursive=True)
-    frames = [storage_backend.read(obj.object_name, format="parquet") for obj in objects]
+    # Selecting just "user" (the only column _persisted_count needs) before
+    # concatenating -- other test modules/CI seed steps also write under
+    # raw/ in this same bucket with a differently-shaped `meta` struct
+    # (e.g. tests/test_bronze_pipeline.py's raw fixtures), which makes a
+    # naive pl.concat() of full frames fail with a SchemaError the moment
+    # both kinds of file coexist in the bucket -- verified empirically
+    # running the full suite together, as CI does.
+    frames = [storage_backend.read(obj.object_name, format="parquet").select("user") for obj in objects]
     return pl.concat(frames) if frames else pl.DataFrame()
 
 

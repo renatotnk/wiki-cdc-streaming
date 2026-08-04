@@ -21,13 +21,14 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 - **Compute:** [Spark Declarative Pipelines](https://spark.apache.org/) (`pyspark[pipelines]`, Spark 4.1+) + [Delta Lake](https://delta.io/), local via the `spark-pipelines` CLI, optionally as a Databricks Lakeflow Declarative Pipeline
 - **Local inspection:** [DuckDB](https://duckdb.org/) (`delta_scan()`, no SparkSession needed)
 - **Local infrastructure:** Docker Compose
+- **CI/CD:** GitHub Actions — `test` job (zero cloud secrets, local stack only) on every push/PR to `main`; `deploy` job (manual `workflow_dispatch`) updates a Databricks Job via the Jobs API
 - _(Databricks and Streamlit land with their respective phases below)_
 
 ## Phase status
 
 - [x] Phase 1 — Ingestion (producer → messaging → raw bucket)
 - [x] Phase 2 — Bronze (consolidation via Spark)
-- [ ] Phase 2.5 — CI/CD
+- [x] Phase 2.5 — CI/CD
 - [ ] Phase 3 — Silver (Data Quality + Change Data Feed)
 - [ ] Phase 4 — Gold (Dimensional Modeling + Streamlit Dashboard)
 

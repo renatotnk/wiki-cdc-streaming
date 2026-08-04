@@ -1,0 +1,2 @@
+--container-options "--network host"
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
