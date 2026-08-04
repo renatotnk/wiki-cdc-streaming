@@ -22,7 +22,7 @@ GitHub Actions workflow validating Phase 1/2 against the local stack on every pu
 ### Changed
 - Discovered a stricter version of `docs/SPEC-phase2-bronze.md` Section 4.3's constraint while validating this against a genuinely fresh bucket: `bronze_recentchange`'s streaming read also fails `[PATH_NOT_FOUND]` on a `raw/` prefix that has never had a file written to it (not just `bronze_dim_wiki_reference`'s batch read, as originally documented) — CI seeds a throwaway file under both prefixes rather than calling the real producer/consumer or the real Wikimedia sitematrix API.
 
-PR: _pending_ (not yet opened)
+PR: [#3](https://github.com/renatotnk/wiki-cdc-streaming/pull/3)
 
 ## [0.2.0] — Phase 2: Bronze — 2026-08-01
 
