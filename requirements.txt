@@ -18,6 +18,9 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via pytest
 cryptography==49.0.0
     # via google-auth
+delta-spark==4.3.1
+    # via wiki-cdc-streaming
+duckdb==1.5.5
 google-api-core==2.33.0
     # via
     #   google-cloud-core
@@ -46,6 +49,7 @@ googleapis-common-protos==1.75.0
     #   google-api-core
     #   grpc-google-iam-v1
     #   grpcio-status
+    #   pyspark
 grpc-google-iam-v1==0.14.4
     # via google-cloud-pubsub
 grpcio==1.83.0
@@ -55,16 +59,24 @@ grpcio==1.83.0
     #   googleapis-common-protos
     #   grpc-google-iam-v1
     #   grpcio-status
+    #   pyspark
 grpcio-status==1.83.0
     # via
     #   google-api-core
     #   google-cloud-pubsub
+    #   pyspark
 idna==3.18
     # via requests
+importlib-metadata==8.7.1
+    # via delta-spark
 iniconfig==2.3.0
     # via pytest
 minio==7.2.20
     # via wiki-cdc-streaming
+numpy==2.5.1
+    # via
+    #   pandas
+    #   pyspark
 opentelemetry-api==1.44.0
     # via
     #   google-cloud-pubsub
@@ -76,6 +88,8 @@ opentelemetry-semantic-conventions==0.65b0
     # via opentelemetry-sdk
 packaging==26.2
     # via pytest
+pandas==3.0.5
+    # via pyspark
 pluggy==1.6.0
     # via pytest
 polars==1.43.1
@@ -94,6 +108,10 @@ protobuf==7.35.1
     #   grpc-google-iam-v1
     #   grpcio-status
     #   proto-plus
+py4j==0.10.9.9
+    # via pyspark
+pyarrow==25.0.0
+    # via pyspark
 pyasn1==0.6.4
     # via pyasn1-modules
 pyasn1-modules==0.4.2
@@ -104,14 +122,24 @@ pycryptodome==3.23.0
     # via minio
 pygments==2.20.0
     # via pytest
+pyspark==4.1.1
+    # via
+    #   delta-spark
+    #   wiki-cdc-streaming
 pytest==9.1.1
+python-dateutil==2.9.0.post0
+    # via pandas
 python-dotenv==1.2.2
     # via wiki-cdc-streaming
+pyyaml==6.0.3
+    # via pyspark
 requests==2.34.2
     # via
     #   google-api-core
     #   google-cloud-storage
     #   wiki-cdc-streaming
+six==1.17.0
+    # via python-dateutil
 sseclient-py==1.9.0
     # via wiki-cdc-streaming
 typing-extensions==4.16.0
@@ -121,7 +149,13 @@ typing-extensions==4.16.0
     #   opentelemetry-api
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+tzdata==2026.3 ; sys_platform == 'emscripten' or sys_platform == 'win32'
+    # via pandas
 urllib3==2.7.0
     # via
     #   minio
     #   requests
+zipp==4.1.0
+    # via importlib-metadata
+zstandard==0.25.0
+    # via pyspark
