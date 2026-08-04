@@ -266,15 +266,72 @@ Teardown: delete the Lakeflow pipeline, Job (if created), Git folder, and the Ex
 
 ### Local setup
 
-*To be filled in during Phase 2.5 implementation.*
+Nothing new to install — `.github/workflows/ci.yml`'s `test` job reproduces exactly Phase 1/2's local setup (`uv sync`, `docker compose -f local-stack/docker-compose.yml up -d`, JDK 17+). Reproducing it on your own machine before pushing:
+
+```bash
+# 1. Dependencies
+uv sync
+
+# 2. Bring up the local stack (Pub/Sub Emulator + MinIO)
+docker compose -f local-stack/docker-compose.yml up -d
+
+# 3. Generate the local Spark configuration (Phase 2, Section 4.3)
+uv run python -m scripts.render_local_spark_config
+export SPARK_CONF_DIR="$(pwd)/local-stack/.spark-conf"
+```
 
 ### Local run
 
-*To be filled in during Phase 2.5 implementation.*
+```bash
+# Validate the pipeline definition before spending time on a real run
+# (this is what CI runs first, for a cheap fail-fast)
+uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
+
+# Run exactly the suite CI runs
+uv run pytest tests/ -v
+
+# Tear down (no leftover process/cost)
+docker compose -f local-stack/docker-compose.yml down -v
+```
+
+Two things worth knowing, both discovered while wiring up CI on a genuinely fresh MinIO bucket (never touched by a prior producer/consumer run or a manual `fetch_wiki_sitematrix` call):
+
+- **A brand-new bucket needs at least one file under `raw/` *and* one under `dim_wiki_reference/` before the very first `dry-run`/`run`.** `docs/SPEC-phase2-bronze.md` Section 4.3 already documented this for `bronze_dim_wiki_reference`'s batch read; it turns out `bronze_recentchange`'s streaming read hits the identical `[PATH_NOT_FOUND]` on a prefix that has *never* had an object written to it (S3 has no real notion of an "empty but existing" directory) — the SPEC's "tolerates zero files" applied to a bucket that already had a Phase 1 producer/consumer run against it, not to a bucket that has never seen one. In your own local development this resolves itself the first time you run the producer/consumer and `scripts/fetch_wiki_sitematrix.py` (Phase 1/2's own local run steps) — CI has no such prior activity, so its `test` job seeds one throwaway file under each prefix directly (see the workflow file) instead of calling the real producer or the real Wikimedia sitematrix API, keeping the zero-network-call guarantee below intact.
+- **Running the full suite together on a shared bucket can surface schema drift between test files' own raw fixtures.** `tests/test_ingestion_smoke.py` reads back *every* object under `raw/` (not just the ones its own test run wrote) to count persisted events — including whatever `tests/test_bronze_pipeline.py` already wrote there with a differently-shaped `meta` struct. Fixed by selecting only the one column (`user`) that test actually needs before concatenating frames, rather than trying to keep every test file's raw fixture schema in lockstep.
 
 ### Cloud (optional)
 
-*To be filled in during Phase 2.5 implementation (manual `workflow_dispatch` trigger for Databricks Jobs API deploy).*
+> **Cost warning:** deploying updates a real Databricks Job and triggers a real run against Databricks Free Edition serverless compute — stays within fair-use quota at this project's scale, but is a real action against your workspace, unlike everything else in this section.
+
+The `deploy` job **never** runs on a push — only via a manual `workflow_dispatch`, and only when you explicitly type `true` into its `confirm_deploy` input:
+
+```bash
+gh workflow run ci.yml --field confirm_deploy=true
+```
+
+Or from the GitHub UI: **Actions → CI → Run workflow**, set `confirm_deploy` to `true`, pick the branch to deploy.
+
+**One-time setup, before the first deploy:**
+
+1. Complete Phase 2's Cloud section above (S3 bucket, Databricks Free Edition workspace, Unity Catalog External Location, and a Lakeflow Declarative Pipeline created from a Databricks Git folder pointed at this repo).
+2. Wrap that Lakeflow pipeline in a Databricks Job (Workflows → Jobs → Create Job → add a task) if you haven't already — `DatabricksJobsHandler` talks to the **Jobs** API, not the Pipelines API directly, so a Job must already exist to update.
+3. In the GitHub repo settings, add:
+   - **Secrets** (Settings → Secrets and variables → Actions → *Secrets*): `DATABRICKS_HOST` (e.g. `https://your-workspace.cloud.databricks.com`), `DATABRICKS_TOKEN` (a personal access token, or better, a service-principal token scoped to just this Job).
+   - **Variables** (same page → *Variables*, not secrets — these aren't sensitive): `DATABRICKS_JOB_ID` (the numeric Job ID from step 2), `DATABRICKS_NOTEBOOK_PATH` (the Git folder path the Job's task should point at, e.g. `/Repos/wiki-cdc-streaming/pipelines/bronze`).
+
+The `test` job never references any of these four — only the `deploy` job's single "Deploy to Databricks Jobs" step does, which is what makes the zero-cloud-secrets claim for `test` auditable directly from `ci.yml` (SPEC-phase2__5-cicd.md Section 7/8).
+
+**Running the same deploy step locally** (equivalent to what the workflow does, useful for testing before wiring up the GitHub secrets):
+
+```bash
+# .env needs DATABRICKS_HOST/DATABRICKS_TOKEN/DATABRICKS_JOB_ID/DATABRICKS_NOTEBOOK_PATH
+# filled in with real values (see .env.example) -- never committed.
+uv run python -m scripts.deploy_databricks_job --confirm
+```
+
+Omitting `--confirm` refuses to run at all — matching the workflow's own `confirm_deploy=true` gate, so this script is exactly as safe to invoke by accident locally as the workflow is to trigger by accident on GitHub.
+
+**Teardown:** deleting the Databricks Job/Lakeflow pipeline (if you no longer want it) is a manual action in the Databricks UI — this phase's CI workflow has nothing of its own to tear down beyond the `test` job's own `docker compose down -v` (already automatic, `if: always()`).
 
 ---
 
