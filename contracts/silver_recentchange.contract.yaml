@@ -1,0 +1,95 @@
+# Data contract: bronze -> silver boundary for silver_recentchange (P8,
+# SPEC-agnostic-architecture.md Section 4.4). Source of truth for the
+# columns pipelines/silver/silver_recentchange.py|.sql produce -- those
+# files encode these types, they don't redefine them.
+#
+# Structural shape only: unlike bronze_recentchange.contract.yaml (a
+# faithful, typed mirror of raw), silver flattens two bronze structs
+# (meta.dt, length.{old,new}) into top-level columns for direct analyst
+# consumption (SPEC-phase3-silver-cdf.md Section 1). silver_recentchange
+# never carries the row-level DQ verdict (_dq_failure_reasons) -- only rows
+# that already passed all 4 blocking dimensions land here; that column
+# belongs to silver_recentchange_rejected, which has no contract file of its
+# own since nothing downstream consumes its shape (YAGNI).
+contract_version: "1.0.0"
+description: >
+  Historical, insert-only silver layer at the original event grain (no
+  aggregation). Every field below already passed the 4 traceable blocking DQ
+  dimensions (completeness, validity, accuracy, consistency -- see
+  pipelines/silver/dq_rules.py) plus the streaming-safe uniqueness dedup
+  (SPEC-phase3-silver-cdf.md Section 7/8). Any field not listed below is
+  preserved, untyped, inside `_extra_fields` (Robustness Principle, never
+  dropped) -- unchanged from bronze.
+
+fields:
+  - name: _event_id
+    type: string
+    nullable: false
+    description: str(id) -- deduplication key, non-null by construction (completeness dimension).
+  - name: type
+    type: string
+    nullable: false
+    enum: [edit, new, log, categorize]
+  - name: title
+    type: string
+    nullable: false
+    description: NFC-normalized (src/shared/text_normalization.py), applied before the uniqueness dedup.
+  - name: user
+    type: string
+    nullable: true
+    description: NFC-normalized (src/shared/text_normalization.py), applied before the uniqueness dedup.
+  - name: bot
+    type: boolean
+    nullable: true
+  - name: wiki
+    type: string
+    nullable: false
+  - name: timestamp
+    type: long
+    nullable: true
+    description: Event time, epoch seconds (unchanged from bronze).
+  - name: server_url
+    type: string
+    nullable: true
+  - name: meta_dt
+    type: timestamp
+    nullable: false
+    description: Flattened from bronze's meta.dt (ISO8601 string) and cast to a native timestamp -- drives the uniqueness watermark and the timeliness dimension.
+  - name: length_old
+    type: long
+    nullable: true
+    description: Flattened from bronze's length.old.
+  - name: length_new
+    type: long
+    nullable: true
+    description: Flattened from bronze's length.new.
+  - name: _ingested_at
+    type: string
+    nullable: true
+    description: Unchanged from bronze -- ISO8601 string, producer processing time.
+  - name: _producer_instance
+    type: string
+    nullable: true
+  - name: _extra_fields
+    type: string
+    nullable: true
+    description: JSON-encoded fields present in the raw payload but not part of the known schema (P8 escape hatch, unchanged from bronze).
+  - name: _schema_version
+    type: string
+    nullable: true
+  - name: _ingestion_latency_seconds
+    type: long
+    nullable: true
+    description: unix_timestamp(_ingested_at) - unix_timestamp(meta_dt) -- processing-time minus event-time, drives the timeliness dimension.
+  - name: _is_late_arrival
+    type: boolean
+    nullable: false
+    description: _ingestion_latency_seconds > TIMELINESS_WATERMARK_SECONDS (pipelines/silver/dq_rules.py). Informational only -- never blocks (SPEC-phase3-silver-cdf.md Section 5).
+  - name: _silver_loaded_at
+    type: timestamp
+    nullable: false
+    description: Moment this row was written to silver_recentchange (analogous to bronze's _bronze_loaded_at).
+
+# Path-derived, not present in the payload itself -- carried through from
+# bronze unchanged (SPEC-phase1-ingestion.md Section 5).
+partition_columns: [dt, hour]

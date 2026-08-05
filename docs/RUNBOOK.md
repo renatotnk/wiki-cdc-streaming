@@ -339,15 +339,65 @@ Omitting `--confirm` refuses to run at all — matching the workflow's own `conf
 
 ### Local setup
 
-*To be filled in during Phase 3 implementation.*
+```bash
+# 1. Dependencies (uv add pyyaml already recorded in pyproject.toml/uv.lock
+#    for this phase -- uv sync installs it)
+uv sync
+
+# 2. Bring up the local stack if it isn't already running
+docker compose -f local-stack/docker-compose.yml up -d
+
+# 3. Regenerate the local Spark config -- this phase adds a second
+#    generated file, pipelines/spark-pipeline.bronze-only.yml (step 1 of
+#    Local run needs it)
+uv run python -m scripts.render_local_spark_config
+
+# 4. Point Spark at that generated config for every command below (every
+#    new shell)
+export SPARK_CONF_DIR="$(pwd)/local-stack/.spark-conf"
+```
 
 ### Local run
 
-*To be filled in during Phase 3 implementation.*
+```bash
+# 1. Only if bronze_recentchange doesn't exist yet (a fresh clone, CI, or
+#    right after step 3 above on a brand-new bucket) -- skip straight to
+#    step 2 if you've already run Phase 2 successfully at least once. On a
+#    genuinely fresh bucket this also needs Phase 2's own prerequisite
+#    first: `uv run python -m scripts.fetch_wiki_sitematrix` (bronze-only
+#    still includes bronze_dim_wiki_reference, which fails [PATH_NOT_FOUND]
+#    with nothing under dim_wiki_reference/ yet).
+uv run spark-pipelines run --spec pipelines/spark-pipeline.bronze-only.yml
+
+# 2. Validate the combined bronze+silver pipeline definition
+uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
+
+# 3. Run it
+uv run spark-pipelines run --spec pipelines/spark-pipeline.yml
+
+# 4. Inspect the results locally
+uv run python -m scripts.inspect_bronze
+uv run python -m scripts.inspect_silver_rejected
+```
+
+```bash
+# Tear down when done (no leftover process/cost)
+docker compose -f local-stack/docker-compose.yml down -v
+```
+
+Things worth knowing:
+
+- **Step 1 is the one new habit this phase adds** — everything else is Phase 2's pattern unchanged (run from the repo root, first run downloads jars, `SPARK_CONF_DIR` exported per shell). Forgetting it surfaces as `[TABLE_OR_VIEW_NOT_FOUND] ... bronze_recentchange`. Why it's needed at all: `docs/SPEC-phase3-silver-cdf.md` Section 4.2.
+- **No raw data yet?** Steps 1–3 still succeed with zero rows (same as Phase 2). To see actual valid/rejected rows, get some real data flowing first — Phase 1's Local run (producer + consumer) — before step 1, or re-run steps 1–3 later once some has accumulated.
+- **Two variants run side by side per table** (`silver_recentchange_py`/`_sql`, `_rejected_py`/`_sql`, plus the internal `silver_recentchange_staging_py`/`_sql`) — same convention as Phase 2's `bronze_dim_wiki_reference`. Once you've picked one, rename its tables to the unsuffixed name and delete the other language's files.
+- **The SQL variant has two disclosed gaps versus Python** (doesn't NFC-normalize text, doesn't enforce uniqueness) — `docs/trade-offs.md` has the full explanation; not repeated here since this document only tells you what to run.
+- `metastore_db`/`local-stack/.spark-conf/` are just local files, safe to `rm -rf` — but doing so also erases `bronze_recentchange`, so the next run needs step 1 again.
 
 ### Cloud (optional)
 
-*To be filled in during Phase 3 implementation.*
+> **Cost warning:** same Databricks Free Edition serverless compute as Phase 2 — see that phase's cost warning. No new cloud resource is introduced by Phase 3 itself.
+
+Switching compute to Databricks doesn't touch `pipelines/silver/*.py`/`*.sql` (P2/P6) — extend Phase 2's cloud setup by adding `pipelines/silver/` to the same Lakeflow Declarative Pipeline's source code path (step 4 of Phase 2's Cloud section) instead of creating a second pipeline. A pipeline that's never completed a single successful update won't have `bronze_recentchange` queryable by its silver flows either — Lakeflow's own update history plays the role Local run's step 1 plays locally, so nothing extra to do there. One genuine difference worth knowing: real Databricks Lakeflow expectations are available in this environment (`docs/SPEC-phase2-bronze.md` Section 4.1) — this phase deliberately doesn't use them, to keep one set of source files portable to both environments (P6); see `docs/trade-offs.md` if that decision is ever revisited.
 
 ---
 

@@ -29,7 +29,7 @@ _Diagram placeholder — added once enough phases are implemented to make it wor
 - [x] Phase 1 — Ingestion (producer → messaging → raw bucket)
 - [x] Phase 2 — Bronze (consolidation via Spark)
 - [x] Phase 2.5 — CI/CD
-- [ ] Phase 3 — Silver (Data Quality + Change Data Feed)
+- [x] Phase 3 — Silver (Data Quality + Change Data Feed)
 - [ ] Phase 4 — Gold (Dimensional Modeling + Streamlit Dashboard)
 
 ## Documentation

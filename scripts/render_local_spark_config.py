@@ -1,13 +1,17 @@
 """Generates local, machine-specific Spark configuration from .env.
 
-Neither generated file is committed (see .gitignore) -- mirrors how `.env`
-itself is generated from `.env.example` (convention 9.8). Produces:
+None of the generated files are committed (see .gitignore) -- mirrors how
+`.env` itself is generated from `.env.example` (convention 9.8). Produces:
 
 - pipelines/spark-pipeline.yml, from pipelines/spark-pipeline.yml.example:
   fills in the absolute pipeline storage root, and (for dim_wiki_reference's
   SQL variant only) the raw snapshot path -- see
   docs/SPEC-phase2-bronze.md Section 4.3/7.3 for why this can't just be an
   OS environment variable substituted automatically.
+- pipelines/spark-pipeline.bronze-only.yml: the same spec minus the
+  `silver/**` library glob, sharing the same storage root -- needed once,
+  the very first time `bronze_recentchange` doesn't already exist yet
+  (docs/SPEC-phase3-silver-cdf.md Section 4.2).
 - local-stack/.spark-conf/spark-defaults.conf: a persistent local Hive
   metastore plus the Hadoop S3A/GCS connector jars, both of which must be in
   place *before* the Spark JVM boots -- "static" Spark configs that
@@ -140,12 +144,45 @@ def _render_pipeline_spec(
     return out_path
 
 
+def _render_bronze_only_pipeline_spec(
+    out_path: Path = REPO_ROOT / "pipelines" / "spark-pipeline.bronze-only.yml",
+    storage_root: Path = REPO_ROOT / "pipelines" / ".pipeline-storage",
+) -> Path:
+    # Derived independently from the same template as _render_pipeline_spec,
+    # not by reading back whatever that function last wrote -- callers (e.g.
+    # tests) may render the two specs with different storage_root values, so
+    # this must not depend on _render_pipeline_spec's own out_path as a side
+    # channel. Same storage_root as whichever main spec pairs with this one
+    # in a given call site, though: both must point at the same
+    # warehouse/checkpoints so bronze_recentchange, once materialized here,
+    # is what that main spec's silver/** files find. Only needed the very
+    # first time bronze_recentchange doesn't already exist yet: SDP resolves
+    # every file's query during registration, before any of them execute, so
+    # a table declared for the first time in the same run as its own readers
+    # doesn't exist yet when they try to read it (SPEC-phase3-silver-cdf.md
+    # Section 4.2). Run this spec once for real (not dry-run, which doesn't
+    # materialize anything either), then use the main spec from then on.
+    template_path = REPO_ROOT / "pipelines" / "spark-pipeline.yml.example"
+    raw_dim_wiki_reference_path = get_storage_backend().resolve_uri("dim_wiki_reference")
+
+    rendered = (
+        template_path.read_text()
+        .replace("__PIPELINE_STORAGE_ROOT__", str(storage_root))
+        .replace("__RAW_DIM_WIKI_REFERENCE_PATH__", raw_dim_wiki_reference_path)
+        .replace("  - glob:\n      include: silver/**\n", "")
+    )
+    out_path.write_text(rendered)
+    return out_path
+
+
 def main() -> None:
     load_dotenv()
     spark_defaults_path = _render_spark_defaults_conf()
     pipeline_spec_path = _render_pipeline_spec()
+    bronze_only_spec_path = _render_bronze_only_pipeline_spec()
     print(f"Wrote {spark_defaults_path}")
     print(f"Wrote {pipeline_spec_path}")
+    print(f"Wrote {bronze_only_spec_path}")
     print(f'Next: export SPARK_CONF_DIR="{SPARK_CONF_DIR}"')
 
 

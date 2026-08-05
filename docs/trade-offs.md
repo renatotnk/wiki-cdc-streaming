@@ -138,29 +138,41 @@ Format of each entry: **Decision** → **Alternatives considered** → **Why thi
 
 ### SQL for Data Quality rules, PySpark only for orchestration/ingestion
 
-**(Superseded — see "SDP expectations instead of hand-rolled DQ SQL files" below.)**
+**(Superseded — see "Hand-rolled DQ tagging instead of SDP expectations" below. The premise this entry was written against — SDP expectations available as a native mechanism to choose an implementation language for — never held once Phase 2 established expectations don't exist in open-source Spark at all.)**
 
 - **Alternatives considered:** everything in PySpark (more uniform); everything in SQL (harder to unit test).
 - **Why:** DQ rules are simple, declarative logic — SQL expresses that more directly and is testable in isolation, file by file. Reading the CDF, checkpoint management, and the hybrid write are genuinely complex (state, streaming, conditional decisions) — that justifies PySpark. This split isn't cosmetic, it's a direct application of the "simple in SQL, complex in PySpark" convention.
 - **What we accepted losing:** nothing — both worlds remain independently testable.
 
-### SDP expectations instead of hand-rolled DQ SQL files
+### Hand-rolled DQ tagging instead of SDP expectations
 
-- **Alternatives considered:** the custom `dq_engine.py` + `dq_rules/*.sql` files, combined manually into `_dq_failure_reasons` via `array_compact`.
-- **Why:** once Phase 2/3 moved to Spark Declarative Pipelines, the same 6 DQ dimensions map directly onto SDP's native expectation severities (`expect_or_fail` for contract breaches, `expect_or_drop` for the 5 blocking dimensions, `expect` for the informational timeliness flag) — with dropped-row tracking built into the pipeline's expectation metrics instead of a hand-written split function. This is strictly less custom code for the same guarantee.
-- **What we accepted losing:** the DQ rules are no longer trivially portable to a non-SDP Spark job if we ever moved away from SDP — a reasonable bet given SDP's now-confirmed open-source status.
+- **Alternatives considered:** SDP's native expectation severities (`expect_or_fail`/`expect_or_drop`/`expect`), as this SPEC originally assumed; the custom `dq_engine.py` + `dq_rules/*.sql` files from an even earlier draft.
+- **Why:** re-confirmed empirically during Phase 3 (live against the installed `pyspark==4.1.1`, and against the official docs for the current release, 4.2.0) that SDP expectations genuinely don't exist in open-source Apache Spark — the exact same gap `SPEC-phase2-bronze.md` Section 4.1 already found for bronze's fail-fast check, just not yet carried forward into this SPEC's draft. `pipelines/silver/dq_rules.py` implements the 6 dimensions as plain PySpark column expressions instead, computing `_dq_failure_reasons` once in a shared internal staging table (`silver_recentchange_staging`) that `silver_recentchange`/`silver_recentchange_rejected` each filter — the "route to a side table" pattern the architecture SPEC's P4 invariant needs, without a decorator that doesn't exist.
+- **What we accepted losing:** a native, Databricks-UI-visible expectation metrics view — not available in OSS Spark regardless of implementation choice. Also lost: a `.select()`/`.drop()` choice turned out to matter for a *different*, unrelated reason during this work — see "Same-run cross-table reads need bronze materialized by an earlier run" below.
 
 ### Uniqueness dedup only within the micro-batch, never an anti-join against all of silver
 
-- **Alternatives considered:** an anti-join against the entire silver table on every run, guaranteeing global uniqueness.
-- **Why:** an anti-join against the whole target table would force reading and shuffling the entire history on every incremental batch — exactly the cost that reading via CDF was designed to avoid. It's safe to give this up because three earlier layers of defense already exist (LRU cache in the producer, dedup at the consumer's flush, `SilverIngestor`'s own checkpoint exactly-once guarantee).
-- **What we accepted losing:** a formal, automatic *global* uniqueness guarantee — in practice, the residual risk is close to zero given the earlier layers, and the performance gain is substantial.
+- **Alternatives considered:** an anti-join against the entire silver table on every run, guaranteeing global uniqueness; `ROW_NUMBER() OVER (PARTITION BY _event_id ORDER BY _ingested_at DESC)` (this SPEC's original draft).
+- **Why:** an anti-join against the whole target table would force reading and shuffling the entire history on every incremental batch — exactly the cost that reading via CDF was designed to avoid. `ROW_NUMBER()` turned out to be a dead end regardless of that cost argument: verified empirically that non-time-based window functions are categorically disallowed on a streaming Dataset (`NON_TIME_WINDOW_NOT_SUPPORTED_IN_STREAMING`). `dropDuplicatesWithinWatermark(["_event_id"])` is Spark's own streaming-safe primitive for this, relying on the same three earlier defense layers (LRU cache in the producer, dedup at the consumer's flush, SDP's own checkpoint exactly-once guarantee) instead of an expensive anti-join.
+- **What we accepted losing:** a formal, automatic *global* uniqueness guarantee (in practice the residual risk is close to zero given the earlier layers) — **and** per-row traceability for the rows it does drop: `dropDuplicatesWithinWatermark` doesn't expose which rows it removed, so a duplicate `_event_id` dropped this way never appears in `silver_recentchange_rejected` with a `"uniqueness"` reason, unlike the other 4 blocking dimensions. Accepted because upstream defenses make this rare in practice, and because the alternative (a stream-stream self-join to surface dropped duplicates) would add real state/complexity for a case that's already supposed to not happen. The SQL variant goes further and doesn't enforce uniqueness at all — no SQL-clause equivalent to `dropDuplicatesWithinWatermark` was found in this SDP grammar.
 
-### Hybrid write (append vs. merge) by `_change_type`
+### Same-run cross-table reads need bronze materialized by an earlier run
 
-- **Alternatives considered:** always use `MERGE INTO`, for code uniformity and simplicity.
-- **Why:** in normal operation, 100% of the batch is insert — paying the shuffle/join cost of a `MERGE` for a case that's always insert would be systematic waste. `MERGE` is only used on the rare path (bronze correction), restricted to the affected keys.
-- **What we accepted losing:** code uniformity (two write paths instead of one) — a trade-off accepted because the performance gain on the common path (99%+ of batches) outweighs the marginal simplicity of a single path.
+- **Alternatives considered:** reading `bronze_recentchange` by its physical storage path instead of by catalog name (sidesteps the issue entirely); retrying resolution inside the query function.
+- **Why:** verified empirically that SDP's "Registering graph elements" phase imports and resolves every file's query *before* "Starting execution" begins for any of them — a table declared for the first time in the very same run genuinely doesn't exist yet when a sibling file tries to read it by name, regardless of read style. Path-based reads were rejected despite fully solving the problem: Databricks/Unity Catalog manages table storage locations itself, so a hardcoded local warehouse path has no portable equivalent there, which would violate P6/P2. Retrying *inside* the query function was also tried and is explicitly blocked by the framework (`ATTEMPT_ANALYSIS_IN_PIPELINE_QUERY_FUNCTION`) — pyspark.pipelines forbids any analysis-triggering call from inside a `@dp.table` function body.
+- **What we accepted losing:** a single-command "just run it" first-time setup. The operational sequence now requires one extra one-time step (`spark-pipelines run --spec pipelines/spark-pipeline.bronze-only.yml`) before the combined spec can run for the very first time — documented in `docs/RUNBOOK.md` and encoded in `tests/test_silver_pipeline.py`'s fixture. Rarely a real surprise in practice: Phase 2 is already merged and has already run at least once before Phase 3 exists.
+
+### `CREATE STREAMING TABLE`, not `CREATE OR REFRESH STREAMING TABLE`, for the SQL variant
+
+- **Alternatives considered:** the Databricks Lakeflow-documented `CREATE OR REFRESH STREAMING TABLE` syntax, used in this SPEC's original draft.
+- **Why:** verified empirically that `"OR REFRESH"` only parses for `CREATE MATERIALIZED VIEW` in this SDP grammar (already used by `dim_wiki_reference.sql`) — `CREATE OR REFRESH STREAMING TABLE` throws a bare `ParseException`. `CREATE STREAMING TABLE` (no `"OR REFRESH"`) is the correct syntax.
+- **What we accepted losing:** nothing — this is a pure correction, not a trade-off.
+
+### No `normalize_nfc` and no uniqueness dedup in the SQL variant
+
+- **Alternatives considered:** registering the UDF from a companion Python file in the same pipeline (`pipelines/silver/register_udfs.py`, written and then deleted once this was confirmed not to work).
+- **Why:** verified empirically that registering a Python UDF from inside any file SDP imports — even at plain module level, not inside a query function — throws `[SESSION_MUTATION_IN_DECLARATIVE_PIPELINE.REGISTER_UDF]`; no documented escape hatch was found. Combined with the uniqueness gap above (no SQL-clause equivalent to `dropDuplicatesWithinWatermark`), the SQL variant is missing two real pieces of behavior the Python variant has.
+- **What we accepted losing:** genuine feature parity between the two variants for this phase. This is exactly the scenario convention 9.5.1 already anticipated ("SQL variants aren't always full peers of the Python one") — a real reason to keep both only long enough to compare, then delete one, rather than maintaining two indefinitely.
 
 ### Data-Vault-inspired silver (historical, insert-only), without hub/link/satellite
 
