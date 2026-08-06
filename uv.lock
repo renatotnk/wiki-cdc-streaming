@@ -1062,6 +1062,7 @@ dependencies = [
     { name = "polars" },
     { name = "pyspark", extra = ["pipelines"] },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "sseclient-py" },
 ]
@@ -1081,6 +1082,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.43.1" },
     { name = "pyspark", extras = ["pipelines"], specifier = ">=4.1.1" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "sseclient-py", specifier = ">=1.9.0" },
 ]

@@ -16,6 +16,8 @@ libraries:
   # spec_path.parent, so this is "bronze/**", not "pipelines/bronze/**".
   - glob:
       include: bronze/**
+  - glob:
+      include: silver/**
 configuration:
   # Only read by dim_wiki_reference.sql's `json.`${spark.wikicdc.raw_dim_wiki_reference_path}`
   # (docs/SPEC-phase2-bronze.md Section 7.3) -- the Python variants of both
@@ -25,3 +27,16 @@ configuration:
   # with an easy-to-miss "Ignoring non-Spark config property" warning --
   # verified empirically (Section 4.3).
   spark.wikicdc.raw_dim_wiki_reference_path: __RAW_DIM_WIKI_REFERENCE_PATH__
+  # A real Spark config, not a custom one -- date_format/from_unixtime
+  # resolve against the session's local timezone by default, not UTC
+  # (verified empirically: America/Sao_Paulo shifted an epoch-second date by
+  # a day). Every timestamp in this project (meta.dt, _ingested_at) is UTC,
+  # and raw's dt=/hour= partitioning is derived from meta.dt directly
+  # (src/consumer/main.py) -- silver's consistency dimension
+  # (pipelines/silver/dq_rules.py) is only correct if this is pinned,
+  # regardless of the machine running spark-pipelines. Not a "static",
+  # JVM-boot-time config (unlike Section 4.3's Delta/metastore settings), so
+  # it's set here rather than in spark-defaults.conf.
+  spark.sql.session.timeZone: UTC
+  spark.wikicdc.timeliness_watermark_seconds: "600"
+  spark.wikicdc.clock_skew_tolerance_seconds: "300"

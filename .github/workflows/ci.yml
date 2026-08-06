@@ -150,9 +150,19 @@ jobs:
           print("seeded raw/ and dim_wiki_reference/ for a fresh CI bucket")
           PY
 
-      # Validates the pipeline definition (schema/dependency wiring) before
-      # spending time on a real execution inside pytest -- cheap fail-fast
-      # (SPEC-phase2__5-cicd.md Section 4).
+      # bronze_recentchange must already exist before a spec including
+      # silver/** can even dry-run, let alone run: SDP resolves every
+      # file's query during registration, before any of them execute, so a
+      # table declared for the first time in the same run as its own
+      # readers isn't queryable by name yet (docs/SPEC-phase3-silver-cdf.md
+      # Section 4.2) -- and a CI runner is always exactly that "genuinely
+      # fresh" case docs/RUNBOOK.md's Phase 3 Local run step 1 covers.
+      - name: Bootstrap bronze_recentchange (required before the combined spec)
+        run: uv run spark-pipelines run --spec pipelines/spark-pipeline.bronze-only.yml
+
+      # Validates the full pipeline definition (schema/dependency wiring)
+      # before spending time on a real execution inside pytest -- cheap
+      # fail-fast (SPEC-phase2__5-cicd.md Section 4).
       - name: Validate the pipeline definition (spark-pipelines dry-run)
         run: uv run spark-pipelines dry-run --spec pipelines/spark-pipeline.yml
 

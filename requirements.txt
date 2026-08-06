@@ -132,7 +132,9 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
     # via wiki-cdc-streaming
 pyyaml==6.0.3
-    # via pyspark
+    # via
+    #   pyspark
+    #   wiki-cdc-streaming
 requests==2.34.2
     # via
     #   google-api-core

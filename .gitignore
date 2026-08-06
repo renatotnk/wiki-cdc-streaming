@@ -12,8 +12,12 @@ gcp-credentials.json
 # specific paths and, for s3/gcs backends, real credentials. Mirrors why
 # .env itself is gitignored (docs/SPEC-phase2-bronze.md Section 4.3).
 pipelines/spark-pipeline.yml
+pipelines/spark-pipeline.bronze-only.yml
 local-stack/.spark-conf/
 pipelines/.pipeline-storage/
 spark-warehouse/
 metastore_db/
 derby.log
+.actrc
+docs/*.drawio
+img/
