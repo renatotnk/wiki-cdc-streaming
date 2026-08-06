@@ -56,13 +56,14 @@ pytestmark = pytest.mark.skipif(
 def test_pipeline_spec(tmp_path):
     """Isolated spark-defaults.conf + spark-pipeline.yml -- see
     tests/test_bronze_pipeline.py's identical fixture for why cwd is
-    tmp_path and the spec file still lives inside the real pipelines/ dir.
+    tmp_path, the spec file still lives inside the real pipelines/ dir, and
+    this renders the bronze-only spec rather than the full one.
     """
     spark_conf_dir = tmp_path / "spark-conf"
     render_config._render_spark_defaults_conf(spark_conf_dir)
 
     spec_path = REPO_ROOT / "pipelines" / "spark-pipeline.test.yml"
-    render_config._render_pipeline_spec(out_path=spec_path, storage_root=tmp_path / "pipeline-storage")
+    render_config._render_bronze_only_pipeline_spec(out_path=spec_path, storage_root=tmp_path / "pipeline-storage")
     try:
         yield spec_path, spark_conf_dir, tmp_path
     finally:

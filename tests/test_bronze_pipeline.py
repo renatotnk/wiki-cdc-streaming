@@ -64,12 +64,22 @@ def test_pipeline_spec(tmp_path):
     subprocess's cwd is tmp_path, so Derby's own metastore_db/derby.log
     (which can't be redirected via spark-defaults.conf -- Section 4.3) land
     there instead of polluting a developer's real repo-root metastore.
+
+    Renders the bronze-only variant, not the full spec: since Phase 3,
+    pipelines/spark-pipeline.yml.example also globs `silver/**`, whose
+    silver_recentchange_staging.py reads bronze_recentchange via CDF in the
+    same run as this fixture's fresh, isolated tmp_path storage root --
+    the exact same-run cross-table-registration failure
+    docs/SPEC-phase3-silver-cdf.md Section 4.2 documents, just hitting this
+    bronze-only test instead of the combined spec it wasn't written to
+    expect. This test only exercises bronze/dim_wiki_reference, so it has
+    no business registering silver/** at all.
     """
     spark_conf_dir = tmp_path / "spark-conf"
     render_config._render_spark_defaults_conf(spark_conf_dir)
 
     spec_path = REPO_ROOT / "pipelines" / "spark-pipeline.test.yml"
-    render_config._render_pipeline_spec(out_path=spec_path, storage_root=tmp_path / "pipeline-storage")
+    render_config._render_bronze_only_pipeline_spec(out_path=spec_path, storage_root=tmp_path / "pipeline-storage")
     try:
         yield spec_path, spark_conf_dir, tmp_path
     finally:
