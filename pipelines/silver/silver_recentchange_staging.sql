@@ -42,25 +42,56 @@
 CREATE STREAMING TABLE silver_recentchange_staging_sql
 AS SELECT
   *,
-  filter(array(
-    CASE WHEN NOT (_event_id IS NOT NULL AND title IS NOT NULL AND wiki IS NOT NULL AND meta_dt IS NOT NULL) THEN 'completeness' END,
-    CASE WHEN NOT (
-      type IN ('edit', 'new', 'log', 'categorize')
-      AND NOT rlike(title, concat('[', chr(0), '-', chr(8), chr(11), chr(12), chr(14), '-', chr(31), ']'))
-    ) THEN 'validity' END,
-    CASE WHEN NOT (
-      (type != 'new' OR length_old IS NULL OR length_old = 0)
-      AND timestamp <= unix_timestamp(current_timestamp()) + ${spark.wikicdc.clock_skew_tolerance_seconds}
-    ) THEN 'accuracy' END,
-    CASE WHEN NOT (dt = date_format(from_unixtime(timestamp), 'yyyy-MM-dd')) THEN 'consistency' END
+  filter(
+    array(
+      CASE 
+        WHEN NOT (
+          _event_id IS NOT NULL 
+          AND title IS NOT NULL 
+          AND wiki IS NOT NULL 
+          AND meta_dt IS NOT NULL
+        ) THEN 'completeness' 
+      END,
+      CASE 
+        WHEN NOT (
+          type IN ('edit', 'new', 'log', 'categorize')
+          AND NOT rlike(title, concat('[', chr(0), '-', chr(8), chr(11), chr(12), chr(14), '-', chr(31), ']'))
+        ) THEN 'validity' 
+      END,
+      CASE 
+        WHEN NOT (
+          (
+            type != 'new' OR length_old IS NULL OR length_old = 0)
+            AND timestamp <= unix_timestamp(current_timestamp()) + ${spark.wikicdc.clock_skew_tolerance_seconds}
+        ) THEN 'accuracy' 
+      END,
+      CASE 
+        WHEN NOT (
+          dt = date_format(from_unixtime(timestamp), 'yyyy-MM-dd')
+        ) THEN 'consistency' 
+      END
   ), x -> x IS NOT NULL) AS _dq_failure_reasons,
   unix_timestamp(to_timestamp(_ingested_at)) - unix_timestamp(meta_dt) AS _ingestion_latency_seconds,
   (unix_timestamp(to_timestamp(_ingested_at)) - unix_timestamp(meta_dt)) > ${spark.wikicdc.timeliness_watermark_seconds} AS _is_late_arrival,
   current_timestamp() AS _silver_loaded_at
 FROM (
   SELECT
-    _event_id, type, title, user, bot, wiki, timestamp,
-    server_url, CAST(meta.dt AS TIMESTAMP) AS meta_dt, length.old AS length_old, length.new AS length_new,
-    _ingested_at, _producer_instance, _extra_fields, _schema_version, dt, hour
+    _event_id, 
+    type, 
+    title, 
+    user, 
+    bot, 
+    wiki, 
+    timestamp,
+    server_url, 
+    CAST(meta.dt AS TIMESTAMP) AS meta_dt, 
+    length.old AS length_old, 
+    length.new AS length_new,
+    _ingested_at, 
+    _producer_instance, 
+    _extra_fields, 
+    _schema_version, 
+    dt, 
+    hour
   FROM STREAM bronze_recentchange
 );
